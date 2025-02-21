@@ -37,6 +37,12 @@ def extract_trace_data(file_path):
             # Convert the parsed JSON data to a DataFrame
             df = pd.DataFrame(trace_data_parsed)
 
+            # Exclude non-"COMPLETED" process execution.
+            nb_entries = df.shape[0]
+            df.drop(df[df['status']!='COMPLETED'].index, inplace=True)
+            if (nb_entries - df.shape[0]) > 0:
+                print(f'**WARNING**: {nb_entries - df.shape[0]} process executions were ignored because their status was not COMPLETED.')
+
             # Define column conversion rules
             # This dictionary maps column types to their respective columns
             conversion_rules = {
