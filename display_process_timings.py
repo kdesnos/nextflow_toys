@@ -1,6 +1,7 @@
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
+import plotly.express as px
 
 def plot_realtime_boxplot(trace_df, filter_string=None):
     """
@@ -75,3 +76,53 @@ def plot_realtime_boxplot(trace_df, filter_string=None):
 
 # Example usage
 # plot_realtime_boxplot(trace_df, filter_string="example")
+
+def plot_wait_times(trace_df):
+    """
+    Plots the waiting time for jobs as a function of the number of allocated CPUs.
+
+    This function calculates the average waiting time for jobs and creates a boxplot
+    to visualize the waiting time distribution based on the number of allocated CPUs.
+
+    Parameters:
+    - trace_df (pd.DataFrame): DataFrame containing 'start', 'submit', and 'cpus' columns.
+
+    Returns:
+    - None: Displays the plot.
+
+    The function performs the following steps:
+    1. Initializes an empty DataFrame `wait_time`.
+    2. Calculates the waiting time for each job by subtracting the 'submit' time from the 'start' time.
+    3. Computes the average waiting time and prints it.
+    4. Adds the number of CPUs allocated for each job to the `wait_time` DataFrame.
+    5. Converts the waiting time to minutes.
+    6. Creates a boxplot using Plotly Express to visualize the waiting time distribution based on the number of CPUs.
+    7. Sets the x-axis tick values to ensure all distinct CPU values are displayed.
+    8. Displays the plot.
+    """
+    wait_time = pd.DataFrame()
+
+    # Average wait time
+    wait_time['wait'] = trace_df['start'] - trace_df['submit']
+    avg_wait = (wait_time['wait']).mean()
+
+    # Per number of CPU wait time
+    wait_time['nb_cpu'] = trace_df['cpus']
+
+    print(f'Average job waiting time: {avg_wait}.')
+
+    # Convert 'wait' column to total seconds
+    wait_time['wait_minutes'] = wait_time['wait'].dt.total_seconds() / 60
+
+    # Create the boxplot
+    fig = px.box(wait_time, y='wait_minutes', x='nb_cpu', points="all",
+                 labels={'wait_minutes': 'Waiting Time (minutes)', 'nb_cpu': 'Number of CPUs'},
+                 title="Waiting time = f(Number of allocated CPUs)")
+
+    # Set x-axis tick values to ensure all distinct CPU values are displayed
+    fig.update_xaxes(tickvals=sorted(wait_time['nb_cpu'].unique()))
+
+    # Show the plot
+    fig.show()
+
+
