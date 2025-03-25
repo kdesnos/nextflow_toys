@@ -4,24 +4,25 @@ import datetime
 
 def generate_nextflow_config(trace_df, output_config_file):
     """
-    Generates a Nextflow configuration file based on the maximum realtime and peak_vmem values for each process.
+    Generates a Nextflow configuration file based on the maximum realtime and peak_rss values for each process.
 
     Parameters:
-    - trace_df (pd.DataFrame): DataFrame containing 'process', 'realtime', and 'peak_vmem' columns.
+    - trace_df (pd.DataFrame): DataFrame containing 'process', 'realtime', and 'peak_rss' columns.
     - output_config_file (str): Path to the output configuration file.
 
     Returns:
     - None: Writes the configuration to the specified file.
     """
     max_nb_retries = 3
+    memory_margin = 1.10
 
-    # Calculate the maximum realtime and peak_vmem for each unique process
+    # Calculate the maximum realtime and peak_rss for each unique process
     max_realtime_df = trace_df.groupby('process')['realtime'].max().reset_index()
-    max_vmem_df = trace_df.groupby('process')['peak_vmem'].max().reset_index()
+    max_rss_df = trace_df.groupby('process')['peak_rss'].max().reset_index()
     pre_alloc_memory_df = trace_df.groupby('process')['memory'].max().reset_index()
 
     # Merge the two DataFrames on the 'process' column
-    merged_df = pd.merge(max_realtime_df, max_vmem_df, on='process')
+    merged_df = pd.merge(max_realtime_df, max_rss_df, on='process')
     merged_df = pd.merge(merged_df, pre_alloc_memory_df, on='process')
 
     # Identify processes with at least one None value in the memory column
@@ -48,15 +49,15 @@ def generate_nextflow_config(trace_df, output_config_file):
         for index, row in merged_df.iterrows():
             process = row['process']
             max_time_seconds = ceil(row['realtime'].total_seconds())
-            max_vmem_mb = ceil(row['peak_vmem'] / (1024 * 1024)) if row['peak_vmem'] > 0 else 1  # Convert peak_vmem to MB
+            max_rss_mb = ceil(row['peak_rss'] / (1024 * 1024)) if row['peak_rss'] > 0 else 1  # Convert peak_rss to MB
             successful_mem_mb = ceil(row['memory'] / (1024 * 1024)) if row['memory'] > 0 else 1  # Convert memory to MB
             file.write(f"    withName: '{process}' {{\n")
             file.write(f"        time = {{ ({max_time_seconds} + 60.0) * Math.pow(1.25, (task.attempt - 1)) * 1.s }}\n")
-            # Check if observed mem footprint is greater than the max_vmem_mb. In which case, just increase at each retry.
-            if successful_mem_mb > max_vmem_mb:
-                memory_config = f"memory = {{ ({max_vmem_mb}*1.25 + ({successful_mem_mb} - {max_vmem_mb}*1.25) * task.attempt / {max_nb_retries}) * 1.MB }}"
+            # Check if observed mem footprint is greater than the max_rss_mb. In which case, just increase at each retry.
+            if successful_mem_mb > max_rss_mb*memory_margin:
+                memory_config = f"memory = {{ ({max_rss_mb}*{memory_margin} + ({successful_mem_mb} - {max_rss_mb}*{memory_margin}) * (task.attempt - 1) / (process.maxRetries - 1)) * 1.MB }}"
             else:
-                memory_config = f"memory = {{ ({max_vmem_mb} * Math.pow(1.25, task.attempt))  * 1.MB }}"
+                memory_config = f"memory = {{ ({max_rss_mb} * Math.pow({memory_margin}, task.attempt))  * 1.MB }}"
 
             if row['printMemory']:
                 file.write(f"        {memory_config}\n")
