@@ -12,6 +12,25 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
     Returns:
     - nx.DiGraph: The NetworkX directed graph representing the DAG.
     """
+    # List of known operator names
+    known_operators = [
+        "combine", "first", "collect", "groupTuple", "join", "merge", "mix", "branch",
+        "buffer", "compose", "concat", "count", "cross", "cycle", "debug", "debounce",
+        "demultiplex", "distribute", "emit", "filter", "flatMap", "flatten", "groupBy",
+        "groupKey", "map", "multiplex", "partition", "paste", "print", "publish",
+        "reduce", "sample", "set", "setVal", "shuffle", "sort", "splitCsv", "splitText",
+        "stageIn", "stageOut", "stdin", "stdout", "subscribe", "switch", "tee", "toList",
+        "transpose", "unique", "until", "watchPath", "wrap", "zip", "min", "max", "sum",
+        "mean", "median", "stddev", "variance"
+    ]
+
+    # List of known Channel factories
+    known_factories = [
+        "Channel.fromList", "Channel.fromPath", "Channel.fromFilePairs", "Channel.fromSRA",
+        "Channel.fromConfigs", "Channel.fromWatch", "Channel.fromEnv", "Channel.fromParams",
+        "Channel.fromTuple", "Channel.fromMap"
+    ]
+
     # Read the HTML file
     with open(dag_report, 'r', encoding='utf-8') as file:
         html_content = file.read()
@@ -36,7 +55,8 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
     # Extract nodes and their names
     nodes = node_pattern.findall(mermaid_graph)
     for node, name in nodes:
-        G.add_node(node, name=name)
+        node_type = "operator" if name in known_operators else "factory" if name in known_factories else "process"
+        G.add_node(node, name=name, type=node_type)
 
     # Extract edges
     edges = edge_pattern.findall(mermaid_graph)
@@ -69,6 +89,7 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
             node_match = node_pattern.match(line)
             if node_match:
                 node, name = node_match.groups()
-                G.add_node(node, name=name, subgraph=subgraph_name)
+                node_type = "operator" if name in known_operators else "factory" if name in known_factories else "process"
+                G.add_node(node, name=name, subgraph=subgraph_name, type=node_type)
 
     return G

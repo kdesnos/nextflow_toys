@@ -9,6 +9,19 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
     - G (nx.DiGraph): The NetworkX directed graph to export.
     - output_path (Path): The path to the output DOT file.
     """
+    def write_node(file, node, data, level=0):
+        actor_name = data['name']
+        inputs = [f"<i{i}>" for i in range(1, G.in_degree(node) + 1)]
+        outputs = [f"<o{i}>" for i in range(1, G.out_degree(node) + 1)]
+        inputs_str = " | ".join(inputs)
+        outputs_str = " | ".join(outputs)
+        file.write(f'\t{"  " * level}{node}[label="{{{actor_name}}} | {{{{ {inputs_str} }} | | {{ {outputs_str} }}}}"')
+        if(data['type'] == "operator"):
+            file.write(f', xlabel="{actor_name}", shape=point, height=0.1, width=0.1')
+        if(data['type'] == "factory"):
+            file.write(f', xlabel="{actor_name}", peripheries=2, shape=point, height=0.15, width=0.15')
+        file.write('];\n')
+
     with open(output_path, 'w', encoding='utf-8') as file:
         file.write("digraph {\n")
         file.write("\tnode [shape=record];\n")
@@ -30,18 +43,13 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
                 file.write(f'\t{"  " * level}subgraph cluster_{subgraph_name.replace("::", "_")} {{\n')
                 file.write(f'\t{"  " * (level + 1)}label="{subgraph_name.split("::")[-1]}";\n')
                 for node in nodes:
-                    actor_name = G.nodes[node]['name']
-                    inputs = [f"<i{i}>" for i in range(1, G.in_degree(node) + 1)]
-                    outputs = [f"<o{i}>" for i in range(1, G.out_degree(node) + 1)]
-                    inputs_str = " | ".join(inputs)
-                    outputs_str = " | ".join(outputs)
-                    file.write(f'\t{"  " * (level + 1)}{node}[label="{{{actor_name}}} | {{{{ {inputs_str} }} | | {{ {outputs_str} }}}} "];\n')
+                    write_node(file, node, G.nodes[node], level + 1)
                 file.write(f'\t{"  " * level}}}\n')
 
         # Write nested subgraphs
         def write_nested_subgraphs(file, subgraphs):
             for subgraph_name, nodes in subgraphs.items():
-                level=0
+                level = 0
                 nested_subgraphs = subgraph_name.split("::")
                 current_nodes = nodes
                 for i, subgraph in enumerate(nested_subgraphs):
@@ -50,6 +58,7 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
                         write_subgraph(file, current_subgraph_name, current_nodes, level=level)
                     else:
                         file.write(f'\t{"  " * level}subgraph cluster_{current_subgraph_name.replace("::", "_")} {{\n')
+                        file.write(f'\t{"  " * (level + 1)}label="{current_subgraph_name.split("::")[-1]}";\n')
                         level += 1
                 for l in range(level):
                     file.write(f'\t{"  " * l}}}\n')
@@ -60,12 +69,7 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
         # Write nodes not in any subgraph
         for node, data in G.nodes(data=True):
             if 'subgraph' not in data or data['subgraph'].startswith("unnamed_"):
-                actor_name = data['name']
-                inputs = [f"<i{i}>" for i in range(1, G.in_degree(node) + 1)]
-                outputs = [f"<o{i}>" for i in range(1, G.out_degree(node) + 1)]
-                inputs_str = " | ".join(inputs)
-                outputs_str = " | ".join(outputs)
-                file.write(f'\t{node}[label="{{{actor_name}}} | {{{{ {inputs_str} }} | | {{ {outputs_str} }}}} "];\n')
+                write_node(file, node, data)
 
         # Write edges
         for source, target, data in G.edges(data=True):
@@ -75,4 +79,3 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
             file.write(f'\t{source}:{source_port} -> {target}:{target_port} [label="{label}"];\n')
 
         file.write("}\n")
-
