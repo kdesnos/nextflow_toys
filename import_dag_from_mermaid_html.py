@@ -28,7 +28,7 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
     # Regular expressions to extract nodes, edges, and subgraphs
     node_pattern = re.compile(r'(\w+)[\[|\()|\"]+(.*?)[\"|\]|\)]+')
     edge_pattern = re.compile(r'(\w+) -->(?:\|(.*?)\|)? (\w+)')
-    subgraph_pattern = re.compile(r'subgraph\s+(\w+|".*?")', re.DOTALL)
+    subgraph_pattern = re.compile(r'subgraph\s+([\w\:]+|".*?")', re.DOTALL)
 
     # Create a directed graph
     G = nx.DiGraph()
