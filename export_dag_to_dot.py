@@ -18,6 +18,7 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
         inputs_str = " | ".join(inputs)
         outputs_str = " | ".join(outputs)
         file.write(f'\t{"  " * level}{node}[label="{{{actor_name}}} | {{{{ {inputs_str} }} | | {{ {outputs_str} }}}}"')
+        file.write(f', tooltip="x{data["nb_exec"]}"')
         if(data['type'] == "operator"):
             file.write(f', xlabel="{actor_name}", shape=point, height=0.1, width=0.1')
         if(data['type'] == "factory"):
@@ -38,7 +39,7 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
             subgraph_name = data.get('subgraph')
             if subgraph_name:
                 if not subgraph_name.startswith("unnamed_"):
-                    subgraph_name = f"{top_graph_name}::" + subgraph_name
+                    subgraph_name = f"{top_graph_name}:" + subgraph_name
                 if subgraph_name not in subgraphs:
                     subgraphs[subgraph_name] = []
                 subgraphs[subgraph_name].append(node)
@@ -50,8 +51,8 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
         # Write subgraphs
         def write_subgraph(file, subgraph_name, nodes, level=0):
             if not subgraph_name.startswith("unnamed_") and subgraph_name != top_graph_name:
-                file.write(f'\t{"  " * level}subgraph cluster_{subgraph_name.replace("::", "_")} {{\n')
-                file.write(f'\t{"  " * (level + 1)}label="{subgraph_name.split("::")[-1]}";\n')
+                file.write(f'\t{"  " * level}subgraph cluster_{subgraph_name.replace(":", "_")} {{\n')
+                file.write(f'\t{"  " * (level + 1)}label="{subgraph_name.split(":")[-1]}";\n')
             elif subgraph_name == top_graph_name:
                 file.write(f'\t{"  " * level}subgraph {subgraph_name} {{\n')
             else:
@@ -65,15 +66,15 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
         def write_nested_subgraphs(file, subgraphs):
             for subgraph_name, nodes in subgraphs.items():
                 level = 0
-                nested_subgraphs = subgraph_name.split("::")
+                nested_subgraphs = subgraph_name.split(":")
                 current_nodes = nodes
                 for i, subgraph in enumerate(nested_subgraphs):
-                    current_subgraph_name = "::".join(nested_subgraphs[:i+1])
+                    current_subgraph_name = ":".join(nested_subgraphs[:i+1])
                     if current_subgraph_name == subgraph_name:
                         write_subgraph(file, current_subgraph_name, current_nodes, level=level)
                     else:
                         if current_subgraph_name != top_graph_name:
-                            file.write(f'\t{"  " * level}subgraph cluster_{current_subgraph_name.replace("::", "_")} {{\n')
+                            file.write(f'\t{"  " * level}subgraph cluster_{current_subgraph_name.replace(":", "_")} {{\n')
                         else:
                             file.write(f'\t{"  " * level}subgraph {top_graph_name} {{\n')
                         level += 1
