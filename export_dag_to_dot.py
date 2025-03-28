@@ -9,6 +9,8 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
     - G (nx.DiGraph): The NetworkX directed graph to export.
     - output_path (Path): The path to the output DOT file.
     """
+    top_graph_name = "main"
+
     def write_node(file, node, data, level=0):
         actor_name = data['name']
         inputs = [f"<i{i}>" for i in range(1, G.in_degree(node) + 1)]
@@ -27,27 +29,31 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
         file.write("\tnode [shape=record, width=0.0, height=0.0];\n")
         file.write("\trankdir=LR;\n")
         file.write("\tnewrank=true;\n")
+        file.write("\tranksep=1.5;\n")
 
         # Collect subgraphs
+        # Nodes not belonging to any subgraph are placed in the "main" subgraph.
         subgraphs = {}
         for node, data in G.nodes(data=True):
             subgraph_name = data.get('subgraph')
             if subgraph_name:
                 if not subgraph_name.startswith("unnamed_"):
-                    subgraph_name = "main::" + subgraph_name
+                    subgraph_name = f"{top_graph_name}::" + subgraph_name
                 if subgraph_name not in subgraphs:
                     subgraphs[subgraph_name] = []
                 subgraphs[subgraph_name].append(node)
             else:
-                if "main" not in subgraphs:
-                    subgraphs["main"] = []
-                subgraphs["main"].append(node)
+                if top_graph_name not in subgraphs:
+                    subgraphs[top_graph_name] = []
+                subgraphs[top_graph_name].append(node)
 
         # Write subgraphs
         def write_subgraph(file, subgraph_name, nodes, level=0):
-            if not subgraph_name.startswith("unnamed_"):
+            if not subgraph_name.startswith("unnamed_") and subgraph_name != top_graph_name:
                 file.write(f'\t{"  " * level}subgraph cluster_{subgraph_name.replace("::", "_")} {{\n')
                 file.write(f'\t{"  " * (level + 1)}label="{subgraph_name.split("::")[-1]}";\n')
+            elif subgraph_name == top_graph_name:
+                file.write(f'\t{"  " * level}subgraph {subgraph_name} {{\n')
             else:
                 file.write(f'\t{"  " * level}{{\n')
                 file.write(f'\t{"  " * (level + 1)}rank=same;\n')
@@ -66,19 +72,16 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
                     if current_subgraph_name == subgraph_name:
                         write_subgraph(file, current_subgraph_name, current_nodes, level=level)
                     else:
-                        file.write(f'\t{"  " * level}subgraph cluster_{current_subgraph_name.replace("::", "_")} {{\n')
-                        file.write(f'\t{"  " * (level + 1)}label="{current_subgraph_name.split("::")[-1]}";\n')
+                        if current_subgraph_name != top_graph_name:
+                            file.write(f'\t{"  " * level}subgraph cluster_{current_subgraph_name.replace("::", "_")} {{\n')
+                        else:
+                            file.write(f'\t{"  " * level}subgraph {top_graph_name} {{\n')
                         level += 1
                 for l in range(level, 0, -1):
                     file.write(f'\t{"  " * (l-1)}}}\n')
                 level = 0
 
         write_nested_subgraphs(file, subgraphs)
-
-        # Write nodes not in any subgraph
-        for node, data in G.nodes(data=True):
-            if 'subgraph' not in data or data['subgraph'].startswith("zzunnamed_"):
-                write_node(file, node, data)
 
         # Write edges
         for source, target, data in G.edges(data=True):
