@@ -24,13 +24,6 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
         "mean", "median", "stddev", "variance"
     ]
 
-    # List of known Channel factories
-    known_factories = [
-        "Channel.fromList", "Channel.fromPath", "Channel.fromFilePairs", "Channel.fromSRA",
-        "Channel.fromConfigs", "Channel.fromWatch", "Channel.fromEnv", "Channel.fromParams",
-        "Channel.fromTuple", "Channel.fromMap"
-    ]
-
     # Read the HTML file
     with open(dag_report, 'r', encoding='utf-8') as file:
         html_content = file.read()
@@ -48,6 +41,7 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
     node_pattern = re.compile(r'(\w+)[\[|\()|\"]+(.*?)[\"|\]|\)]+')
     edge_pattern = re.compile(r'(\w+) -->(?:\|(.*?)\|)? (\w+)')
     subgraph_pattern = re.compile(r'subgraph\s+([\w\:]+|".*?")', re.DOTALL)
+    factory_pattern = re.compile(r'Channel\..*')
 
     # Create a directed graph
     G = nx.DiGraph()
@@ -55,7 +49,7 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
     # Extract nodes and their names
     nodes = node_pattern.findall(mermaid_graph)
     for node, name in nodes:
-        node_type = "operator" if name in known_operators else "factory" if name in known_factories else "process"
+        node_type = "operator" if name in known_operators else "factory" if factory_pattern.match(name) else "process"
         G.add_node(node, name=name, type=node_type)
 
     # Extract edges
@@ -66,30 +60,25 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
 
     # Extract subgraphs
     subgraph_lines = mermaid_graph.splitlines()
-    subgraph_name = None
-    in_subgraph = False
+    subgraph_stack = []
     anonymous_subgraph_count = 0
 
     for line in subgraph_lines:
         line = line.strip()
         if line.startswith('subgraph'):
-            if in_subgraph:
-                # Process the previous subgraph
-                subgraph_name = None
             subgraph_name_match = subgraph_pattern.match(line)
             if subgraph_name_match:
                 subgraph_name = subgraph_name_match.group(1).strip('"')
                 if subgraph_name == " ":
                     subgraph_name = f'unnamed_{anonymous_subgraph_count}'
                     anonymous_subgraph_count += 1
-            in_subgraph = True
-        elif line == 'end' and in_subgraph:
-            in_subgraph = False
-        elif in_subgraph:
+            subgraph_stack.append(subgraph_name)
+        elif line == 'end' and len(subgraph_stack) > 0:
+            subgraph_stack.pop()
+        elif len(subgraph_stack) > 0:
             node_match = node_pattern.match(line)
             if node_match:
                 node, name = node_match.groups()
-                node_type = "operator" if name in known_operators else "factory" if name in known_factories else "process"
-                G.add_node(node, name=name, subgraph=subgraph_name, type=node_type)
+                G.nodes[node]["subgraph"] = subgraph_stack[-1]
 
     return G
