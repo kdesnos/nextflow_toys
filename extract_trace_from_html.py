@@ -71,6 +71,10 @@ def extract_trace_data(file_path):
                         elif col_type == 'numeric_with_nan':
                             df[column] = pd.to_numeric(df[column].replace('-', None), errors='coerce')
 
+            # Extract process name and path within the workflow as separate columns.
+            df['process_name'] = df['process'].str.split(':').str[-1]
+            df['process_path'] = df['process'].str.split(':').str[:-1].str.join(':')
+
             return df
         except json.JSONDecodeError as e:
             # Print the error and a portion of the JSON string for inspection if parsing fails
