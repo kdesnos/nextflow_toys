@@ -1,16 +1,14 @@
--- Clean
-DROP TABLE IF EXISTS Traces;
-DROP TABLE IF EXISTS Processes;
-DROP TABLE IF EXISTS ProcessInputs;
-DROP TABLE IF EXISTS ResolvedProcessNames;
-DROP TABLE IF EXISTS ProcessExecutions;
-DROP TABLE IF EXISTS ProcessExecParams;
+-- Database version 
+-- (to be changed when upgrading the structure)
+PRAGMA user_version = 0;
 
 -- Create Tables
+-- Traces table makes it possible to manage multiple nextflow run
+-- within a single database.
 CREATE TABLE IF NOT EXISTS Traces (
 	tId INTEGER PRIMARY KEY UNIQUE, -- Trace ID
 	day TEXT,
-	name TEXT UNIQUE
+	name TEXT UNIQUE NOT NULL
 );
 
 -- Process Table contains all process as defined in the nf files.
@@ -34,37 +32,35 @@ CREATE TABLE IF NOT EXISTS ResolvedProcessNames (
 -- Table containing the list of input and output parameters of processes
 CREATE TABLE IF NOT EXISTS ProcessInputs (
 	pId INTEGER,
-	rank INTEGER,
+	rank INTEGER NOT NULL,
 	type TEXT,
-	name TEXT,
+	name TEXT NOT NULL,
 	FOREIGN KEY (pId) REFERENCES Processes (pId),
 	
 	Constraint PK_ProcessInputs Primary Key (pId, rank)
 );
 
+-- ProcessExecutions table contain the useful information from the html report.
 CREATE TABLE IF NOT EXISTS ProcessExecutions (
 	eId Integer UNIQUE PRIMARY KEY, --Execution ID
 	tId INTEGER,
 	rId INTEGER,
-	instance INTEGER,
-	hash TEXT,
+	instance INTEGER NOT NULL,
+	hash TEXT NOT NULL,
+	time Real NOT NULL, -- Execution time in milliseconds
 	
 	FOREIGN KEY (tId) REFERENCES Traces (tId),
 	FOREIGN KEY (rId) REFERENCES ResolvedProcessNames (rId),
 	UNIQUE (tId, rId, instance, hash)
 );
 
+-- ProcessExecParams contains the parameter values associated to process
+-- executions listed in the ProcessExecutions table
 CREATE TABLE IF NOT EXISTS ProcessExecParams (
 	eId INTEGER,
-	rank INTEGER,
-	value TEXT,
+	rank INTEGER NOT NULL,
+	value TEXT NOT NULL,
 	
 	FOREIGN KEY (eId) REFERENCES ProcessExecutions (eId),
 	Constraint PK_ProcessExecParams Primary Key (eId, rank)
 );
-
--- Populate DB for tests
-INSERT INTO Processes VALUES (1, "bidon", "/path/to/nf");
-INSERT INTO ResolvedProcessNames VALUES (1, 1, "main:bidon");
-INSERT INTO ProcessInputs VALUES (1, 1, "val", "arg1");
-INSERT INTO ProcessInputs VALUES (1, 2, "path", "arg2");
