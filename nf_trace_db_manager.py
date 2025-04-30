@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from trace_table_manager import TraceTableManager, TraceEntry
-
+from processes_table_manager import ProcessesTableManager
 
 class NextflowTraceDBManager:
     def __init__(self, db_path):
@@ -13,6 +13,7 @@ class NextflowTraceDBManager:
         self.db_path = db_path
         self.connection = None
         self.trace_manager = None
+        self.process_manager = None  # Add ProcessesTableManager attribute
 
     def connect(self):
         """
@@ -23,6 +24,7 @@ class NextflowTraceDBManager:
             # Activate foreign_keys support on all connections as it is not persistent.
             self.connection.execute("PRAGMA foreign_keys = ON;")
             self.trace_manager = TraceTableManager(self.connection)
+            self.process_manager = ProcessesTableManager(self.connection)  # Initialize ProcessesTableManager
 
     def isConnected(self):
         """
