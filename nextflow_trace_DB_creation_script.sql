@@ -18,8 +18,9 @@ CREATE TABLE IF NOT EXISTS Traces (
 CREATE TABLE IF NOT EXISTS Processes (
     pId INTEGER PRIMARY KEY UNIQUE NOT NULL, -- Process ID
     name TEXT NOT NULL,
-    path TEXT NOT NULL  -- Path of the nf files containing the process definition.
+    path TEXT NOT NULL, -- Path of the nf files containing the process definition.
     					-- Should be relative to the project folder for portability of the DB.
+	UNIQUE (name, path)
 );
 
 -- Table containing all resolved names of Process (aliased and non aliased)

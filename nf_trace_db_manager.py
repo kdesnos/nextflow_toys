@@ -125,37 +125,15 @@ if __name__ == "__main__":
     user_version = db_manager.getUserVersion()
     print(f"Database user_version: {user_version}")
 
-    # Create a fake trace entry
-    fake_trace1 = TraceEntry(tId=0, day="2023-01-02", name="sleepy_einstein")
-    fake_trace2 = TraceEntry(tId=0, day="2025-01-02", name="funny_curie")
-    print(f"Adding trace entry: {fake_trace1}")
-    
-    # Add the trace entry to the database
-    db_manager.trace_manager.addTraceEntry(fake_trace1)
-    db_manager.trace_manager.addTraceEntry(fake_trace2)
-    print(f"Trace entry added successfully with id: {fake_trace1.tId}.")
-
-    # Add multiple trace entries to the database
-    trace_entries = [
-        TraceEntry(tId=0, day="2023-03-01", name="happy_tesla"),
-        TraceEntry(tId=0, day="2023-03-02", name="brilliant_newton"),
-        TraceEntry(tId=0, day="2023-03-03", name="curious_darwin"),
-    ]
-    db_manager.trace_manager.addTraces(trace_entries)
-    print("Multiple trace entries added successfully.")
-
      # Add metadata from an HTML file to the Traces table
     html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-02-21_15_23_50_report.html"
     db_manager.trace_manager.addMetadataToTraceTable(html_file_path)
     html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_report.html"
     db_manager.trace_manager.addMetadataToTraceTable(html_file_path)
 
-    # Retrieve a specific trace entry by name
-    trace = db_manager.trace_manager.getTraceEntry("sleepy_einstein")
-    if trace:
-        print(f"Retrieved trace entry: {trace}")
-    else:
-        print("Trace entry not found.")
+    # Add process definitions
+    log_file = "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_nextflow_logs.log"
+    db_manager.process_manager.addProcessDefinitionsToTable(log_file)
     
     # Retrieve all trace entries
     all_traces = db_manager.trace_manager.getAllTraces()
@@ -163,11 +141,11 @@ if __name__ == "__main__":
     for trace in all_traces:
         print(trace)
 
-    # Remove a specific trace entry by name
-    if db_manager.trace_manager.removeTraceEntry("sleepy_einstein"):
-        print("Trace entry 'sleepy_einstein' removed successfully.")
-    else:
-        print("Trace entry 'sleepy_einstein' does not exist.")     
+    # Retrieve all process entries
+    all_processes = db_manager.process_manager.getAllProcesses()
+    print("All process entries:")
+    for process in all_processes:
+        print(process)
 
     db_manager.close()
     print("Connection closed.")

@@ -1,3 +1,5 @@
+from extract_from_nf_log import extractProcessDefinitions
+
 class ProcessesTableManager:
     def __init__(self, connection):
         """
@@ -20,6 +22,20 @@ class ProcessesTableManager:
 
         # Retrieve the last inserted row ID and update the process_entry's pId
         process_entry.pId = cursor.lastrowid
+
+    def addProcessDefinitionsToTable(self, file_path):
+        """
+        Extract process definitions from a Nextflow log file and add them to the Processes table.
+
+        :param file_path: The path to the Nextflow log file.
+        """
+        # Extract process definitions using the extractProcessDefinitions function
+        process_definitions = extractProcessDefinitions(file_path)
+
+        # Add each process to the database
+        for _, row in process_definitions.iterrows():
+            process_entry = ProcessEntry(pId=0, name=row['process_name'], path=row['path'])
+            self.addProcess(process_entry)
 
     def getProcessByName(self, name):
         """

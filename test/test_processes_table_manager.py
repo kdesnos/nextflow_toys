@@ -1,7 +1,9 @@
 import unittest
 import sqlite3
+from unittest.mock import patch
 from processes_table_manager import ProcessesTableManager, ProcessEntry
 from nf_trace_db_manager import NextflowTraceDBManager
+import pandas as pd
 
 
 class TestProcessesTableManager(unittest.TestCase):
@@ -70,6 +72,29 @@ class TestProcessesTableManager(unittest.TestCase):
         self.assertEqual(len(all_processes), 2)
         self.assertEqual(all_processes[0].name, "process1")
         self.assertEqual(all_processes[1].name, "process2")
+
+    @patch("processes_table_manager.extractProcessDefinitions")
+    def test_addProcessDefinitionsToTable(self, mock_extract_process_definitions):
+        # Mock the extractProcessDefinitions function
+        mock_data = [
+            {"path": "/home/user/sub.nf", "process_name": "x"},
+            {"path": "/home/user/sub.nf", "process_name": "a"},
+            {"path": "/home/user/sub.nf", "process_name": "b"},
+            {"path": "/home/user/main.nf", "process_name": "a"},
+            {"path": "/home/user/main.nf", "process_name": "x"},
+        ]
+        mock_extract_process_definitions.return_value = pd.DataFrame(mock_data)
+
+        # Call the method to add process definitions to the table
+        self.process_manager.addProcessDefinitionsToTable("mock_log_file.log")
+
+        # Verify that the processes were added to the database
+        all_processes = self.process_manager.getAllProcesses()
+        self.assertEqual(len(all_processes), 5)
+        self.assertEqual(all_processes[0].name, "x")
+        self.assertEqual(all_processes[0].path, "/home/user/sub.nf")
+        self.assertEqual(all_processes[4].name, "x")
+        self.assertEqual(all_processes[4].path, "/home/user/main.nf")        
 
 
 if __name__ == "__main__":
