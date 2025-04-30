@@ -1,5 +1,7 @@
 import os
 import sqlite3
+from trace_table_manager import TraceTableManager, TraceEntry
+
 
 class NextflowTraceDBManager:
     def __init__(self, db_path):
@@ -10,6 +12,7 @@ class NextflowTraceDBManager:
         """
         self.db_path = db_path
         self.connection = None
+        self.trace_manager = None
 
     def connect(self):
         """
@@ -17,6 +20,9 @@ class NextflowTraceDBManager:
         """
         if self.connection is None:
             self.connection = sqlite3.connect(self.db_path)
+            # Activate foreign_keys support on all connections as it is not persistent.
+            self.connection.execute("PRAGMA foreign_keys = ON;")
+            self.trace_manager = TraceTableManager(self.connection)
 
     def isConnected(self):
         """
@@ -45,30 +51,33 @@ class NextflowTraceDBManager:
         """
         Create tables in the SQLite database using the SQL script file.
 
-        :param force: If True, force execution of the SQL script even if the database is not empty.
-        :raises Exception: If the database is not connected or if the database is not empty and force is False.
+        :param force: If True, delete the database file and recreate it.
+        :raises Exception: If the database is not connected and force is False.
         """
-        if not self.isConnected():
+        if not self.isConnected() and not force:
             raise Exception("Database is not connected.")
 
-        if not self.isDatabaseEmpty() and not force:
-            raise Exception("Database is not empty. Use force=True to overwrite.")
-
-        cursor = self.connection.cursor()
-
         if force:
-            # Drop all existing tables
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            tables = cursor.fetchall()
-            for table_name, in tables:
-                cursor.execute(f"DROP TABLE IF EXISTS {table_name};")
+            # Close the connection if it's open
+            if self.connection:
+                self.close()
 
-        # Read and execute the SQL script
+            # Delete the database file
+            if os.path.exists(self.db_path):
+                os.remove(self.db_path)
+                print(f"Database file '{self.db_path}' deleted.")
+
+            # Reconnect to recreate the database
+            self.connect()
+
+        # Read and execute the SQL script to create tables
         with open(os.path.join(os.path.dirname(__file__), "nextflow_trace_DB_creation_script.sql"), "r") as sql_file:
             sql_script = sql_file.read()
+            cursor = self.connection.cursor()
             cursor.executescript(sql_script)
 
         self.connection.commit()
+        print("Tables created successfully.")
 
     def close(self):
         """
@@ -90,46 +99,8 @@ class NextflowTraceDBManager:
 
         cursor = self.connection.cursor()
         cursor.execute("PRAGMA user_version;")
-        user_version = cursor.fetchone()[0]
-        return user_version
-
-
-    def addTraceEntry(self, trace_entry):
-        """
-        Add a TraceEntry instance to the Traces table in the SQLite database and update the tId of the input trace_entry.
-
-        :param trace_entry: An instance of TraceEntry.
-        :raises Exception: If the database is not connected.
-        """
-        if not self.isConnected():
-            raise Exception("Database is not connected.")
-
-        cursor = self.connection.cursor()
-        cursor.execute(
-            "INSERT INTO Traces (day, name) VALUES (?, ?);",
-            (trace_entry.day, trace_entry.name),
-        )
-        self.connection.commit()
-
-        # Retrieve the last inserted row ID and update the trace_entry's tId
-        trace_entry.tId = cursor.lastrowid
-
-
-class TraceEntry:
-    def __init__(self, tId, day, name):
-        """
-        Initialize a TraceEntry instance.
-
-        :param tId: Trace ID (integer).
-        :param day: Day (string).
-        :param name: Name (string).
-        """
-        self.tId = tId
-        self.day = day
-        self.name = name
-
-    def __repr__(self):
-        return f"TraceEntry(tId={self.tId}, day='{self.day}', name='{self.name}')"     
+        version = cursor.fetchone()[0]
+        return version
 
 
 # Main prog
@@ -144,6 +115,8 @@ if __name__ == "__main__":
     # Check if the database is empty and create tables if necessary
     if db_manager.isDatabaseEmpty():
         db_manager.createTables()
+    else:
+        db_manager.createTables(force=True)
     print("Tables created successfully.")
     
     # Retrieve and print the user_version of the database
@@ -151,12 +124,42 @@ if __name__ == "__main__":
     print(f"Database user_version: {user_version}")
 
     # Create a fake trace entry
-    fake_trace = TraceEntry(tId=0, day="2023-01-02", name="sleepy_einstein")
-    print(f"Adding trace entry: {fake_trace}")
+    fake_trace1 = TraceEntry(tId=0, day="2023-01-02", name="sleepy_einstein")
+    fake_trace2 = TraceEntry(tId=0, day="2025-01-02", name="funny_curie")
+    print(f"Adding trace entry: {fake_trace1}")
     
     # Add the trace entry to the database
-    db_manager.addTraceEntry(fake_trace)
-    print(f"Trace entry added successfully with id: {fake_trace.tId}.")
+    db_manager.trace_manager.addTraceEntry(fake_trace1)
+    db_manager.trace_manager.addTraceEntry(fake_trace2)
+    print(f"Trace entry added successfully with id: {fake_trace1.tId}.")
+
+    # Add multiple trace entries to the database
+    trace_entries = [
+        TraceEntry(tId=0, day="2023-03-01", name="happy_tesla"),
+        TraceEntry(tId=0, day="2023-03-02", name="brilliant_newton"),
+        TraceEntry(tId=0, day="2023-03-03", name="curious_darwin"),
+    ]
+    db_manager.trace_manager.addTraces(trace_entries)
+    print("Multiple trace entries added successfully.")
+
+    # Retrieve a specific trace entry by name
+    trace = db_manager.trace_manager.getTraceEntry("sleepy_einstein")
+    if trace:
+        print(f"Retrieved trace entry: {trace}")
+    else:
+        print("Trace entry not found.")
+    
+    # Retrieve all trace entries
+    all_traces = db_manager.trace_manager.getAllTraces()
+    print("All trace entries:")
+    for trace in all_traces:
+        print(trace)
+
+    # Remove a specific trace entry by name
+    if db_manager.trace_manager.removeTraceEntry("sleepy_einstein"):
+        print("Trace entry 'sleepy_einstein' removed successfully.")
+    else:
+        print("Trace entry 'sleepy_einstein' does not exist.")     
 
     db_manager.close()
     print("Connection closed.")
