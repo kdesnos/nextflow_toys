@@ -25,6 +25,17 @@ class TestTraceTableManager(unittest.TestCase):
         trace = TraceEntry(tId=0, day="2023-01-01", name="test_trace")
         self.trace_manager.addTraceEntry(trace)
         self.assertNotEqual(trace.tId, 0)  # tId should be updated after insertion
+    
+    def test_addDuplicateTraceFails(self):
+        trace1 = TraceEntry(tId=0, day="2023-01-01", name="duplicate_trace")
+        trace2 = TraceEntry(tId=0, day="2023-01-02", name="duplicate_trace")  # Same name
+
+        # Add the first trace
+        self.trace_manager.addTraceEntry(trace1)
+
+        # Attempt to add the duplicate trace and expect an exception
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.trace_manager.addTraceEntry(trace2)
 
     def test_getTraceEntry(self):
         trace = TraceEntry(tId=0, day="2023-01-01", name="test_trace")

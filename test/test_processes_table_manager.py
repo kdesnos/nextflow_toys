@@ -94,7 +94,18 @@ class TestProcessesTableManager(unittest.TestCase):
         self.assertEqual(all_processes[0].name, "x")
         self.assertEqual(all_processes[0].path, "/home/user/sub.nf")
         self.assertEqual(all_processes[4].name, "x")
-        self.assertEqual(all_processes[4].path, "/home/user/main.nf")        
+        self.assertEqual(all_processes[4].path, "/home/user/main.nf")
+
+    def test_addDuplicateProcessFails(self):
+        process1 = ProcessEntry(pId=0, name="process1", path="/path/to/process1.nf")
+        process2 = ProcessEntry(pId=0, name="process1", path="/path/to/process1.nf")  # Duplicate
+
+        # Add the first process
+        self.process_manager.addProcess(process1)
+
+        # Attempt to add the duplicate process and expect an exception
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.process_manager.addProcess(process2)
 
 
 if __name__ == "__main__":
