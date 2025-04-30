@@ -1,5 +1,6 @@
 import unittest
 import sqlite3
+from unittest.mock import patch
 from trace_table_manager import TraceTableManager, TraceEntry
 from nf_trace_db_manager import NextflowTraceDBManager
 
@@ -59,6 +60,33 @@ class TestTraceTableManager(unittest.TestCase):
         result = self.trace_manager.removeTraceEntry("non_existent_trace")
         self.assertFalse(result)
 
+    @patch('trace_table_manager.extract_pipeline_metadata')
+    def test_addMetadataToTraceTable(self, mock_extract_pipeline_metadata):
+        # Mock the metadata extraction function
+        mock_metadata = {
+            'start_time': '22-Apr-2025 14:03:40',
+            'run_name': 'hungry_lamarr'
+        }
+        mock_extract_pipeline_metadata.return_value = mock_metadata
+
+        # Call the method to add metadata to the trace table
+        self.trace_manager.addMetadataToTraceTable("mock_file_path.html")
+
+        # Verify that the metadata was added to the database
+        all_traces = self.trace_manager.getAllTraces()
+        self.assertEqual(len(all_traces), 1)
+        self.assertEqual(all_traces[0].day, '22-Apr-2025 14:03:40')
+        self.assertEqual(all_traces[0].name, 'hungry_lamarr')
+
+    @patch('trace_table_manager.extract_pipeline_metadata')
+    def test_addMetadataToTraceTable_invalid_metadata(self, mock_extract_pipeline_metadata):
+        # Mock the metadata extraction function to return invalid metadata
+        mock_extract_pipeline_metadata.return_value = None
+
+        # Ensure the method raises an exception for invalid metadata
+        with self.assertRaises(Exception) as context:
+            self.trace_manager.addMetadataToTraceTable("mock_file_path.html")
+        self.assertEqual(str(context.exception), "Failed to extract metadata from the file.")
 
 if __name__ == "__main__":
     unittest.main()

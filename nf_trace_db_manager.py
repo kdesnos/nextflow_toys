@@ -142,6 +142,12 @@ if __name__ == "__main__":
     db_manager.trace_manager.addTraces(trace_entries)
     print("Multiple trace entries added successfully.")
 
+     # Add metadata from an HTML file to the Traces table
+    html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-02-21_15_23_50_report.html"
+    db_manager.trace_manager.addMetadataToTraceTable(html_file_path)
+    html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_report.html"
+    db_manager.trace_manager.addMetadataToTraceTable(html_file_path)
+
     # Retrieve a specific trace entry by name
     trace = db_manager.trace_manager.getTraceEntry("sleepy_einstein")
     if trace:

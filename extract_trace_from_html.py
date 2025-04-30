@@ -84,3 +84,30 @@ def extract_trace_data(file_path):
     else:
         print("Trace data not found.")
         return None
+
+def extract_pipeline_metadata(file_path):
+    """
+    Extracts the pipeline start time and run name from an HTML file.
+
+    Parameters:
+    - file_path (str): The path to the HTML file containing the pipeline metadata.
+
+    Returns:
+    - dict: A dictionary containing the 'start_time' and 'run_name'.
+    """
+    # Load the HTML file
+    with open(file_path, 'r', encoding='utf-8') as file:
+        html_content = file.read()
+
+    # Extract the start time
+    start_time_match = re.search(r'<span id="workflow_start">([\d\-A-Za-z\s:]+)</span>', html_content)
+    start_time = start_time_match.group(1) if start_time_match else None
+
+    # Extract the run name
+    run_name_match = re.search(r'<h2 class="text-muted mb-4"><samp>\[([a-zA-Z0-9_]+)\]</samp>', html_content)
+    run_name = run_name_match.group(1) if run_name_match else None
+
+    return {
+        'start_time': start_time,
+        'run_name': run_name
+    }
