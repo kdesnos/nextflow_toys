@@ -135,19 +135,18 @@ if __name__ == "__main__":
     html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-02-21_15_23_50_report.html"
     db_manager.trace_manager.addMetadataToTraceTable(html_file_path)
     html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_report.html"
-    db_manager.trace_manager.addMetadataToTraceTable(html_file_path)
+    tId = db_manager.trace_manager.addMetadataToTraceTable(html_file_path)
 
-    # Add process definitions
-    log_file = "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_nextflow_logs.log"
-    db_manager.process_manager.addProcessDefinitionsToTable(log_file)
-
-    db_manager.resolved_process_manager.addResolvedProcessNamesToTable(log_file, db_manager.process_manager)
-    
     # Retrieve all trace entries
     all_traces = db_manager.trace_manager.getAllTraces()
     print("All trace entries:")
     for trace in all_traces:
         print(trace)
+
+
+    # Add process definitions
+    log_file = "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_nextflow_logs.log"
+    db_manager.process_manager.addProcessDefinitionsToTable(log_file)
 
     # Retrieve all process entries
     all_processes = db_manager.process_manager.getAllProcesses()
@@ -155,11 +154,21 @@ if __name__ == "__main__":
     for process in all_processes:
         print(process)
 
+    db_manager.resolved_process_manager.addResolvedProcessNamesToTable(log_file, db_manager.process_manager)
+
     # Retrieve all resolved process names
     all_process_names = db_manager.resolved_process_manager.getAllResolvedProcessNames()
     print("All resolved process names:")    
     for process_name in all_process_names:
         print(process_name)
+
+    db_manager.process_executions_manager.addProcessExecutionsFromFile(html_file_path, tId, db_manager.resolved_process_manager)
+
+    # Retrieve all process executions names
+    all_process_executions = db_manager.process_executions_manager.getAllProcessExecutions()
+    print("All process executions:")    
+    for process_execution in all_process_executions:
+        print(process_execution)
 
     db_manager.close()
     print("Connection closed.")

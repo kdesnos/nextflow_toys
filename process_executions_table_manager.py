@@ -1,3 +1,6 @@
+import re
+from extract_trace_from_html import extract_trace_data
+
 class ProcessExecutionTableManager:
     def __init__(self, connection):
         """
@@ -20,6 +23,41 @@ class ProcessExecutionTableManager:
 
         # Retrieve the last inserted row ID and update the execution_entry's eId
         execution_entry.eId = cursor.lastrowid
+
+    def addProcessExecutionsFromFile(self, file_path, trace_id, resolved_process_manager):
+        """
+        Parse the content of a file using extract_trace_data and add the content to the ProcessExecutions table.
+
+        :param file_path: The path to the trace HTML file.
+        :param trace_id: The Trace ID (tId) to associate with the executions.
+        :param resolved_process_manager: An instance of ResolvedProcessNamesTableManager to resolve rId.
+        """
+        # Extract trace data from the file
+        trace_data = extract_trace_data(file_path)
+        if trace_data is None:
+            raise Exception("Failed to extract trace data from the file.")
+
+        # Iterate over the rows of the DataFrame and add each execution to the database
+        for _, row in trace_data.iterrows():
+            # Extract the instance number from the 'name' column (e.g., "process_name (1)")
+            instance_match = re.search(r"\((\d+)\)$", row["name"])
+            instance = int(instance_match.group(1)) if instance_match else 1 # in case no name was matche, there is a single instance of the process.
+
+            # Resolve the rId using the resolved process manager
+            resolved_entry = resolved_process_manager.getResolvedProcessByName(row["process"])
+            if resolved_entry is None:
+                raise Exception(f"Resolved process name '{row['process']}' not found in ResolvedProcessNames table.")
+
+            # Create a ProcessExecutionEntry and add it to the database
+            execution_entry = ProcessExecutionEntry(
+                eId=0,
+                tId=trace_id,
+                rId=resolved_entry.rId,
+                instance=instance,
+                hash=row["hash"],
+                time=row["realtime"].total_seconds(),
+            )
+            self.addProcessExecution(execution_entry)
 
     def getProcessExecutionByHash(self, hash_value):
         """

@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS ProcessExecutions (
 	rId INTEGER REFERENCES ResolvedProcessNames (rId) ON DELETE CASCADE,
 	instance INTEGER NOT NULL,
 	hash TEXT NOT NULL,
-	time Real NOT NULL, -- Execution time in milliseconds
+	time Real NOT NULL, -- Execution time in seconds
 	
 	UNIQUE (tId, rId, instance, hash)
 );

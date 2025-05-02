@@ -81,6 +81,7 @@ class TraceTableManager:
         - file_path (str): The path to the HTML file containing the pipeline metadata.
 
         :raises Exception: If the metadata extraction fails
+        :return: The traceId of the added entry.
         """
         # Extract metadata using the extract_pipeline_metadata function
         metadata = extract_pipeline_metadata(file_path)
@@ -97,7 +98,8 @@ class TraceTableManager:
 
         # Add the trace entry to the Traces table
         self.addTraceEntry(trace_entry)
-        print(f"Metadata added to Traces table: {trace_entry}")            
+        print(f"Metadata added to Traces table: {trace_entry}")  
+        return trace_entry.tId          
 
 
 class TraceEntry:
