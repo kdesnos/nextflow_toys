@@ -117,9 +117,9 @@ class TestProcessExecutionTableManager(unittest.TestCase):
 
         # Call the method to add process executions to the table
         self.execution_manager.addProcessExecutionsFromFile(
+            self.db_manager,
             "mock_trace_file.html",
             self.trace_entry.tId,
-            self.db_manager.resolved_process_manager,
         )
 
         # Verify that the process executions were added to the database

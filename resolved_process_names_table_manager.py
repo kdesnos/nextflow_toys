@@ -33,12 +33,12 @@ class ResolvedProcessNamesTableManager:
         for resolved_entry in resolved_entries:
             self.addResolvedProcessName(resolved_entry)
 
-    def addResolvedProcessNamesToTable(self, file_path, processes_table_manager):
+    def addResolvedProcessNamesToTable(self, trace_db_manager, file_path):
         """
         Extract resolved process names from a Nextflow log file and add them to the ResolvedProcessNames table.
 
         :param file_path: The path to the Nextflow log file.
-        :param processes_table_manager: An instance of ProcessesTableManager to resolve pId.
+        :param trace_db_manager: An instance of NextflowTraceDBManager to resolve pId.
         """
         # Extract resolved process names using the extractResolvedProcessNames function
         resolved_names = extractResolvedProcessNames(file_path)
@@ -46,7 +46,7 @@ class ResolvedProcessNamesTableManager:
         # Add each resolved name to the database
         for _, row in resolved_names.iterrows():
             # Retrieve the pId for the process name and path
-            process = processes_table_manager.getProcessByName(row["process_name"])
+            process = trace_db_manager.process_manager.getProcessByName(row["process_name"])
             if process is None:
                 raise Exception(f"Process '{row['process_name']}' not found in Processes table.")
 

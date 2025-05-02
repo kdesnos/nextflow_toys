@@ -25,13 +25,13 @@ class ProcessExecutionTableManager:
         # Retrieve the last inserted row ID and update the execution_entry's eId
         execution_entry.eId = cursor.lastrowid
 
-    def addProcessExecutionsFromFile(self, file_path, trace_id, resolved_process_manager):
+    def addProcessExecutionsFromFile(self, trace_db_manager, file_path, trace_id):
         """
         Parse the content of a file using extract_trace_data and add the content to the ProcessExecutions table.
 
         :param file_path: The path to the trace HTML file.
         :param trace_id: The Trace ID (tId) to associate with the executions.
-        :param resolved_process_manager: An instance of ResolvedProcessNamesTableManager to resolve rId.
+        :param trace_db_manager: An instance of NextflowTraceDBManager to resolve rId.
         """
         # Extract trace data from the file
         trace_data = extract_trace_data(file_path)
@@ -46,7 +46,7 @@ class ProcessExecutionTableManager:
             instance = int(instance_match.group(1)) if instance_match else 1
 
             # Resolve the rId using the resolved process manager
-            resolved_entry = resolved_process_manager.getResolvedProcessByName(row["process"])
+            resolved_entry = trace_db_manager.resolved_process_manager.getResolvedProcessByName(row["process"])
             if resolved_entry is None:
                 raise Exception(f"Resolved process name '{row['process']}' not found in ResolvedProcessNames table.")
 

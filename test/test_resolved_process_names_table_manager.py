@@ -87,7 +87,7 @@ class TestResolvedProcessNamesTableManager(unittest.TestCase):
         mock_extract_resolved_names.return_value = pd.DataFrame(mock_data)
 
         # Call the method to add resolved process names to the table
-        self.resolved_manager.addResolvedProcessNamesToTable("mock_log_file.log", self.process_manager)
+        self.resolved_manager.addResolvedProcessNamesToTable(self.db_manager, "mock_log_file.log")
 
         # Verify that the resolved names were added to the database
         all_resolved = self.resolved_manager.getAllResolvedProcessNames()

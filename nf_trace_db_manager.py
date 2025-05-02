@@ -5,6 +5,7 @@ from processes_table_manager import ProcessesTableManager
 from resolved_process_names_table_manager import ResolvedProcessNamesTableManager
 from process_executions_table_manager import ProcessExecutionTableManager
 
+
 class NextflowTraceDBManager:
     def __init__(self, db_path):
         """
@@ -110,32 +111,66 @@ class NextflowTraceDBManager:
         version = cursor.fetchone()[0]
         return version
 
+    def addMetadataFromHtml(self, html_file_path):
+        """
+        Wrapper method to add metadata from an HTML file to the Traces table.
+
+        :param html_file_path: The path to the HTML file.
+        :return: The Trace ID (tId) of the added metadata.
+        """
+        return self.trace_manager.addMetadataToTraceTable(html_file_path)
+
+    def addProcessDefinitionsFromLog(self, log_file_path):
+        """
+        Wrapper method to add process definitions from a log file to the Processes table.
+
+        :param log_file_path: The path to the log file.
+        """
+        self.process_manager.addProcessDefinitionsToTable(log_file_path)
+
+    def addResolvedProcessNamesFromLog(self, log_file_path):
+        """
+        Wrapper method to add resolved process names from a log file to the ResolvedProcessNames table.
+
+        :param log_file_path: The path to the log file.
+        """
+        self.resolved_process_manager.addResolvedProcessNamesToTable(self, log_file_path)
+
+    def addProcessExecutionsFromHtml(self, html_file_path, trace_id):
+        """
+        Wrapper method to add process executions from an HTML file to the ProcessExecutions table.
+
+        :param html_file_path: The path to the HTML file.
+        :param trace_id: The Trace ID (tId) to associate with the executions.
+        """
+        self.process_executions_manager.addProcessExecutionsFromFile(self, html_file_path, trace_id)
+
 
 # Main prog
 if __name__ == "__main__":
     # Initialize the database manager with the path to the SQLite database
     db_manager = NextflowTraceDBManager("nf_trace_db.sqlite")
-    
+
     # Establish a connection to the database
     db_manager.connect()
     print("Connected to the database.")
-    
+
     # Check if the database is empty and create tables if necessary
     if db_manager.isDatabaseEmpty():
         db_manager.createTables()
     else:
         db_manager.createTables(force=True)
     print("Tables created successfully.")
-    
+
     # Retrieve and print the user_version of the database
     user_version = db_manager.getUserVersion()
     print(f"Database user_version: {user_version}")
 
-     # Add metadata from an HTML file to the Traces table
+    # Add metadata from an HTML file to the Traces table
     html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-02-21_15_23_50_report.html"
-    db_manager.trace_manager.addMetadataToTraceTable(html_file_path)
+    db_manager.addMetadataFromHtml(html_file_path)
     html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_report.html"
-    tId = db_manager.trace_manager.addMetadataToTraceTable(html_file_path)
+    tId = db_manager.addMetadataFromHtml(html_file_path)
 
     # Retrieve all trace entries
     all_traces = db_manager.trace_manager.getAllTraces()
@@ -143,10 +178,9 @@ if __name__ == "__main__":
     for trace in all_traces:
         print(trace)
 
-
     # Add process definitions
     log_file = "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_nextflow_logs.log"
-    db_manager.process_manager.addProcessDefinitionsToTable(log_file)
+    db_manager.addProcessDefinitionsFromLog(log_file)
 
     # Retrieve all process entries
     all_processes = db_manager.process_manager.getAllProcesses()
@@ -154,19 +188,19 @@ if __name__ == "__main__":
     for process in all_processes:
         print(process)
 
-    db_manager.resolved_process_manager.addResolvedProcessNamesToTable(log_file, db_manager.process_manager)
+    db_manager.addResolvedProcessNamesFromLog(log_file)
 
     # Retrieve all resolved process names
     all_process_names = db_manager.resolved_process_manager.getAllResolvedProcessNames()
-    print("All resolved process names:")    
+    print("All resolved process names:")
     for process_name in all_process_names:
         print(process_name)
 
-    db_manager.process_executions_manager.addProcessExecutionsFromFile(html_file_path, tId, db_manager.resolved_process_manager)
+    db_manager.addProcessExecutionsFromHtml(html_file_path, tId)
 
     # Retrieve all process executions names
     all_process_executions = db_manager.process_executions_manager.getAllProcessExecutions()
-    print("All process executions:")    
+    print("All process executions:")
     for process_execution in all_process_executions:
         print(process_execution)
 
