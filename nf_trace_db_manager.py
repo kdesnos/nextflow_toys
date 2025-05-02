@@ -136,12 +136,12 @@ class NextflowTraceDBManager:
         """
         self.resolved_process_manager.addResolvedProcessNamesToTable(self, log_file_path)
 
-    def addProcessExecutionsFromHtml(self, html_file_path, trace_id):
+    def addProcessExecutionsFromHtml(self, html_file_path, trace_id = None):
         """
         Wrapper method to add process executions from an HTML file to the ProcessExecutions table.
 
         :param html_file_path: The path to the HTML file.
-        :param trace_id: The Trace ID (tId) to associate with the executions.
+        :param trace_id: Optionnaly, the Trace ID (tId) to associate with the process executions. If not provided, it will be retrieved from the HTML file.
         """
         self.process_executions_manager.addProcessExecutionsFromFile(self, html_file_path, trace_id)
 
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-02-21_15_23_50_report.html"
     db_manager.addMetadataFromHtml(html_file_path)
     html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_report.html"
-    tId = db_manager.addMetadataFromHtml(html_file_path)
+    # Not added, as it will automatically be when adding traces.
 
     # Retrieve all trace entries
     all_traces = db_manager.trace_manager.getAllTraces()
@@ -196,7 +196,7 @@ if __name__ == "__main__":
     for process_name in all_process_names:
         print(process_name)
 
-    db_manager.addProcessExecutionsFromHtml(html_file_path, tId)
+    db_manager.addProcessExecutionsFromHtml(html_file_path)
 
     # Retrieve all process executions names
     all_process_executions = db_manager.process_executions_manager.getAllProcessExecutions()

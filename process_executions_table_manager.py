@@ -25,14 +25,18 @@ class ProcessExecutionTableManager:
         # Retrieve the last inserted row ID and update the execution_entry's eId
         execution_entry.eId = cursor.lastrowid
 
-    def addProcessExecutionsFromFile(self, trace_db_manager, file_path, trace_id):
+    def addProcessExecutionsFromFile(self, trace_db_manager, file_path, trace_id= None):
         """
         Parse the content of a file using extract_trace_data and add the content to the ProcessExecutions table.
+        Trace ID is automatically retrieved from the file and added to the appropriate table.
+        In case the Table ID already existed in the database, nothing is added to the ProcessExecutions Table.
 
         :param file_path: The path to the trace HTML file.
-        :param trace_id: The Trace ID (tId) to associate with the executions.
         :param trace_db_manager: An instance of NextflowTraceDBManager to resolve rId.
+        :param trace_it: Optionnaly, a trace_id can be given, thus skipping the update of the Trace table.
         """
+        trace_id = trace_db_manager.addMetadataFromHtml(file_path) if trace_id is None else trace_id
+
         # Extract trace data from the file
         trace_data = extract_trace_data(file_path)
         if trace_data is None:

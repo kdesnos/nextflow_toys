@@ -40,6 +40,7 @@ class ResolvedProcessNamesTableManager:
         :param file_path: The path to the Nextflow log file.
         :param trace_db_manager: An instance of NextflowTraceDBManager to resolve pId.
         """
+
         # Extract resolved process names using the extractResolvedProcessNames function
         resolved_names = extractResolvedProcessNames(file_path)
 
