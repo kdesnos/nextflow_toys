@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from process_inputs_table_manager import ProcessInputsTableManager
 from trace_table_manager import TraceTableManager
 from processes_table_manager import ProcessesTableManager
 from resolved_process_names_table_manager import ResolvedProcessNamesTableManager
@@ -19,6 +20,7 @@ class NextflowTraceDBManager:
         self.process_manager = None
         self.resolved_process_manager = None  # Add ResolvedProcessNamesTableManager attribute
         self.process_executions_manager = None
+        self.process_inputs_manager = None
 
     def connect(self):
         """
@@ -32,6 +34,7 @@ class NextflowTraceDBManager:
             self.process_manager = ProcessesTableManager(self.connection)
             self.resolved_process_manager = ResolvedProcessNamesTableManager(self.connection)  # Initialize ResolvedProcessNamesTableManager
             self.process_executions_manager = ProcessExecutionTableManager(self.connection)
+            self.process_inputs_manager = ProcessInputsTableManager(self.connection)
 
     def isConnected(self):
         """
