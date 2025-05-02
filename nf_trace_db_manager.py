@@ -3,6 +3,7 @@ import sqlite3
 from trace_table_manager import TraceTableManager
 from processes_table_manager import ProcessesTableManager
 from resolved_process_names_table_manager import ResolvedProcessNamesTableManager
+from process_executions_table_manager import ProcessExecutionTableManager
 
 class NextflowTraceDBManager:
     def __init__(self, db_path):
@@ -16,6 +17,7 @@ class NextflowTraceDBManager:
         self.trace_manager = None
         self.process_manager = None
         self.resolved_process_manager = None  # Add ResolvedProcessNamesTableManager attribute
+        self.process_executions_manager = None
 
     def connect(self):
         """
@@ -28,6 +30,7 @@ class NextflowTraceDBManager:
             self.trace_manager = TraceTableManager(self.connection)
             self.process_manager = ProcessesTableManager(self.connection)
             self.resolved_process_manager = ResolvedProcessNamesTableManager(self.connection)  # Initialize ResolvedProcessNamesTableManager
+            self.process_executions_manager = ProcessExecutionTableManager(self.connection)
 
     def isConnected(self):
         """
@@ -137,6 +140,8 @@ if __name__ == "__main__":
     # Add process definitions
     log_file = "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_nextflow_logs.log"
     db_manager.process_manager.addProcessDefinitionsToTable(log_file)
+
+    db_manager.resolved_process_manager.addResolvedProcessNamesToTable(log_file, db_manager.process_manager)
     
     # Retrieve all trace entries
     all_traces = db_manager.trace_manager.getAllTraces()
@@ -149,6 +154,12 @@ if __name__ == "__main__":
     print("All process entries:")
     for process in all_processes:
         print(process)
+
+    # Retrieve all resolved process names
+    all_process_names = db_manager.resolved_process_manager.getAllResolvedProcessNames()
+    print("All resolved process names:")    
+    for process_name in all_process_names:
+        print(process_name)
 
     db_manager.close()
     print("Connection closed.")
