@@ -1,6 +1,7 @@
 import re
 from extract_trace_from_html import extract_trace_data
 
+
 class ProcessExecutionTableManager:
     def __init__(self, connection):
         """
@@ -41,7 +42,8 @@ class ProcessExecutionTableManager:
         for _, row in trace_data.iterrows():
             # Extract the instance number from the 'name' column (e.g., "process_name (1)")
             instance_match = re.search(r"\((\d+)\)$", row["name"])
-            instance = int(instance_match.group(1)) if instance_match else 1 # in case no name was matche, there is a single instance of the process.
+            # in case no name was matches, there is a single instance of the process.
+            instance = int(instance_match.group(1)) if instance_match else 1
 
             # Resolve the rId using the resolved process manager
             resolved_entry = resolved_process_manager.getResolvedProcessByName(row["process"])
@@ -55,7 +57,7 @@ class ProcessExecutionTableManager:
                 rId=resolved_entry.rId,
                 instance=instance,
                 hash=row["hash"],
-                time=row["realtime"].total_seconds(),
+                time=row["realtime"].total_seconds() * 1000.0
             )
             self.addProcessExecution(execution_entry)
 

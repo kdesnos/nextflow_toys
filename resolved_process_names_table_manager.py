@@ -24,6 +24,15 @@ class ResolvedProcessNamesTableManager:
         # Retrieve the last inserted row ID and update the resolved_entry's rId
         resolved_entry.rId = cursor.lastrowid
 
+    def addAllResolvedProcessNames(self, resolved_entries):
+        """
+        Add multiple resolved process name entries to the ResolvedProcessNames table.
+
+        :param resolved_entries: A collection of ResolvedProcessEntry instances.
+        """
+        for resolved_entry in resolved_entries:
+            self.addResolvedProcessName(resolved_entry)
+
     def addResolvedProcessNamesToTable(self, file_path, processes_table_manager):
         """
         Extract resolved process names from a Nextflow log file and add them to the ResolvedProcessNames table.

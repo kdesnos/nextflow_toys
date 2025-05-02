@@ -1,5 +1,8 @@
 import unittest
 import sqlite3
+from unittest.mock import patch
+
+import pandas as pd
 from process_executions_table_manager import ProcessExecutionTableManager, ProcessExecutionEntry
 from nf_trace_db_manager import NextflowTraceDBManager
 from processes_table_manager import ProcessEntry
@@ -22,12 +25,17 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.db_manager.trace_manager.addTraceEntry(self.trace_entry)
 
         # Add a process entry for testing
-        self.process_entry = ProcessEntry(pId= 0, name="process", path="/path/to/file.nf")
+        self.process_entry = ProcessEntry(pId=0, name="process", path="/path/to/file.nf")
         self.db_manager.process_manager.addProcess(self.process_entry)
 
         # Add a resolved process entry for testing
-        self.resolved_entry = ResolvedProcessEntry(rId=0, pId=1, name="resolved_process")
-        self.db_manager.resolved_process_manager.addResolvedProcessName(self.resolved_entry)
+        resolved_entries = [
+            ResolvedProcessEntry(rId=0, pId=1, name="resolved_process"),
+            ResolvedProcessEntry(rId=0, pId=1, name="main:a"),
+            ResolvedProcessEntry(rId=0, pId=1, name="proc"),
+        ]
+        self.db_manager.resolved_process_manager.addAllResolvedProcessNames(resolved_entries)
+        self.resolved_entry = resolved_entries[0]  # Use the first entry for testing
 
     def tearDown(self):
         self.db_manager.close()
@@ -94,6 +102,36 @@ class TestProcessExecutionTableManager(unittest.TestCase):
     def test_removeNonExistentProcessExecution(self):
         result = self.execution_manager.removeProcessExecutionByHash("non_existent_hash")
         self.assertFalse(result)
+
+    @patch("process_executions_table_manager.extract_trace_data")
+    def test_addProcessExecutionsFromFile(self, mock_extract_trace_data):
+        # Mock the extract_trace_data function
+        mock_data = pd.DataFrame(
+            [
+                {"name": "sub:a (1)", "hash": "hash1", "realtime": pd.Timedelta("123.45s"), "process": "main:a"},
+                {"name": "sub:a (2)", "hash": "hash2", "realtime": pd.Timedelta("456.78s"), "process": "main:a"},
+                {"name": "proc", "hash": "hash3", "realtime": pd.Timedelta("987.65s"), "process": "proc"},
+            ]
+        )
+        mock_extract_trace_data.return_value = mock_data
+
+        # Call the method to add process executions to the table
+        self.execution_manager.addProcessExecutionsFromFile(
+            "mock_trace_file.html",
+            self.trace_entry.tId,
+            self.db_manager.resolved_process_manager,
+        )
+
+        # Verify that the process executions were added to the database
+        all_executions = self.execution_manager.getAllProcessExecutions()
+        self.assertEqual(len(all_executions), 3)
+
+        self.assertEqual(all_executions[0].hash, "hash1")
+        self.assertEqual(all_executions[0].instance, 1)
+        self.assertEqual(all_executions[0].time, 123450)
+        self.assertEqual(all_executions[1].hash, "hash2")
+        self.assertEqual(all_executions[1].instance, 2)
+        self.assertEqual(all_executions[1].time, 456780)
 
 
 if __name__ == "__main__":

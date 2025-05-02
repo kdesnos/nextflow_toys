@@ -95,6 +95,24 @@ class TestResolvedProcessNamesTableManager(unittest.TestCase):
         self.assertEqual(all_resolved[0].name, "resolved1")
         self.assertEqual(all_resolved[1].name, "resolved2")
 
+    def test_addAllResolvedProcessNames(self):
+        # Create multiple resolved process entries
+        resolved_entries = [
+            ResolvedProcessEntry(rId=0, pId=self.process.pId, name="resolved1"),
+            ResolvedProcessEntry(rId=0, pId=self.process.pId, name="resolved2"),
+            ResolvedProcessEntry(rId=0, pId=self.process.pId, name="resolved3"),
+        ]
+
+        # Add all resolved process names to the table
+        self.resolved_manager.addAllResolvedProcessNames(resolved_entries)
+
+        # Verify that all resolved names were added to the database
+        all_resolved = self.resolved_manager.getAllResolvedProcessNames()
+        self.assertEqual(len(all_resolved), 3)
+        self.assertEqual(all_resolved[0].name, "resolved1")
+        self.assertEqual(all_resolved[1].name, "resolved2")
+        self.assertEqual(all_resolved[2].name, "resolved3")
+
 
 if __name__ == "__main__":
     unittest.main()
