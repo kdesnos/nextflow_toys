@@ -1,6 +1,7 @@
 import pandas as pd
 import re
 
+
 def extractProcessDefinitions(file_path):
     """
     Extracts process definitions from a Nextflow log file and returns a pandas DataFrame.
@@ -36,6 +37,7 @@ def extractProcessDefinitions(file_path):
     # Convert the data into a pandas DataFrame
     df = pd.DataFrame(data)
     return df
+
 
 def extractResolvedProcessNames(file_path):
     """
@@ -76,3 +78,59 @@ def extractResolvedProcessNames(file_path):
     # Convert the data into a pandas DataFrame
     df = pd.DataFrame(data)
     return df
+
+
+def extractProcessInputs(file_path):
+    """
+    Extracts process inputs and outputs from a Nextflow log file and returns a pandas DataFrame.
+
+    Parameters:
+    - file_path (str): The path to the Nextflow log file.
+
+    Returns:
+    - pd.DataFrame: A DataFrame containing the resolved process name, input arguments, and output arguments.
+    """
+    # Define the regex pattern to match the relevant line
+    pattern = r"Starting process > ([^\s]+) \((.*?)\) -> \((.*?)\)"
+
+    # Initialize an empty list to store the extracted data
+    data = []
+
+    # Open the file and search for the relevant lines
+    with open(file_path, 'r', encoding='utf-8') as file:
+        for line in file:
+            match = re.search(pattern, line)
+            if match:
+                # Extract the resolved process name, input arguments, and output arguments
+                resolved_process_name = match.group(1)
+                input_args = match.group(2)
+                output_args = match.group(3)
+
+                # Parse the input arguments
+                inputs = []
+                for arg in re.findall(r"(\w+):(\[.*?\]|[^\s,]+)", input_args):
+                    arg_type, arg_value = arg
+                    if arg_value.startswith("[") and arg_value.endswith("]"):
+                        # Parse nested arguments for tuples
+                        nested_args = re.findall(r"(\w+):([^\s,\]]+)", arg_value[1:-1])
+                        inputs.append({"type": arg_type, "value": [{"type": t, "name": n} for t, n in nested_args]})
+                    else:
+                        inputs.append({"type": arg_type, "name": arg_value})
+
+                # Parse the output arguments
+                outputs = []
+                for arg in re.findall(r"(\w+):([^\s,]+)", output_args):
+                    outputs.append({"type": arg[0], "name": arg[1]})
+
+                # Add the extracted data to the list
+                data.append({
+                    "resolved_process_name": resolved_process_name,
+                    "inputs": inputs,
+                    "outputs": outputs
+                })
+
+    # Convert the data into a pandas DataFrame
+    df = pd.DataFrame(data)
+    return df
+
+
