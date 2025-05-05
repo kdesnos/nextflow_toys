@@ -1,3 +1,6 @@
+from extract_from_nf_log import extractExecutionParameters
+
+
 class ProcessExecParamsTableManager:
     def __init__(self, connection):
         """
@@ -66,6 +69,51 @@ class ProcessExecParamsTableManager:
 
         # Check if any rows were affected
         return cursor.rowcount > 0
+
+    def addExecutionParamsFromLog(self, trace_db_manager, file_path):
+        """
+        Extract execution parameters from a log file and add them to the ProcessExecParams table.
+
+        :param trace_db_manager: An instance of NextflowTraceDBManager to resolve execution IDs.
+        :param file_path: The path to the Nextflow log file.
+        """
+        # Extract execution parameters from the log file
+        execution_params = extractExecutionParameters(file_path)
+
+        def add_nested_params(eId, params, base_rank):
+            """
+            Recursively add execution parameters (both top-level and nested) to the database.
+
+            :param eId: Execution ID.
+            :param params: List of parameters (can be top-level or nested).
+            :param base_rank: Base rank for the parameters.
+            """
+            for i, param in enumerate(params):
+                rank = f"{base_rank}.{i}" if base_rank else str(i)
+                if isinstance(param, list):  # Handle nested tuples
+                    add_nested_params(eId, param, rank)
+                else:
+                    exec_param_entry = ProcessExecParamEntry(
+                        eId=eId,
+                        rank=rank,
+                        value=param
+                    )
+                    self.addProcessExecParam(exec_param_entry)
+
+        # Iterate over the rows of the DataFrame and add each parameter to the database
+        for _, row in execution_params.iterrows():
+            # Resolve the execution ID (eId) using the ResolvedProcessNamesTableManager
+            resolved_process_entry = trace_db_manager.resolved_process_manager.getResolvedProcessByName(row["resolved_process_name"])
+            if resolved_process_entry is None:
+                raise Exception(f"Process '{row['resolved_process_name']}' not found in ResolvedProcessNames table.")
+
+            # Retrieve the execution entry using the resolved process ID
+            execution_entry = trace_db_manager.process_executions_manager.getExecutionByResolvedIdAndInstance(resolved_process_entry.rId, row["instance_number"])
+            if execution_entry is None:
+                raise Exception(f"Execution for resolved process '{row['resolved_process_name']}' not found in ProcessExecutions table.")
+
+            # Add all execution parameters (top-level and nested) to the database
+            add_nested_params(execution_entry.eId, row["input_values"], base_rank="")
 
 
 class ProcessExecParamEntry:

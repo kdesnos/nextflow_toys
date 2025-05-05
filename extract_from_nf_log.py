@@ -181,7 +181,7 @@ def extractExecutionParameters(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
         multiline_buffer = None
         resolved_process_name = None
-        resolved_id = None
+        instance_number = None
 
         for line in file:
             if multiline_buffer is not None:
@@ -191,7 +191,7 @@ def extractExecutionParameters(file_path):
                     # Parse the buffered input values
                     parsed_values = parse_values(multiline_buffer)
                     data.append({
-                        "resolved_id": resolved_id,
+                        "instance_number": instance_number,
                         "resolved_process_name": resolved_process_name,
                         "input_values": parsed_values
                     })
@@ -202,14 +202,14 @@ def extractExecutionParameters(file_path):
             if match:
                 # Extract the resolved process name and start buffering input values
                 resolved_process_name = match.group(1)
-                resolved_id = match.group(2)
+                instance_number = match.group(2)
                 multiline_buffer = match.group(3).strip()
 
                 # If the line already ends with "]", parse it immediately
                 if multiline_buffer.endswith("]"):
                     parsed_values = parse_values(multiline_buffer)
                     data.append({
-                        "resolved_id": resolved_id,
+                        "instance_number": instance_number,
                         "resolved_process_name": resolved_process_name,
                         "input_values": parsed_values
                     })

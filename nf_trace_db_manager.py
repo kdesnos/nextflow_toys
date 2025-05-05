@@ -159,6 +159,14 @@ class NextflowTraceDBManager:
         """
         self.process_inputs_manager.addInputsFromLog(self, log_file_path)
 
+    def addProcessExecParamsFromLog(self, log_file_path):
+        """
+        Wrapper method to add process execution parameters from log file to the ProcessExecParams table.
+
+        :param log_file_path: The path to the log file.
+        """
+        self.process_exec_params_manager.addExecutionParamsFromLog(self, log_file_path)
+
 
 # Main prog
 if __name__ == "__main__":
@@ -223,6 +231,11 @@ if __name__ == "__main__":
     print("All process inputs")
     for process_input in all_process_inputs:
         print(process_input)
+
+    db_manager.addProcessExecParamsFromLog(log_file)
+    all_params = db_manager.process_exec_params_manager.getAllProcessExecParams()
+    for param in all_params:
+        print(param)
 
     db_manager.close()
     print("Connection closed.")
