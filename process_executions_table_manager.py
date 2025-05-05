@@ -89,6 +89,25 @@ class ProcessExecutionTableManager:
             return ProcessExecutionEntry(eId=row[0], tId=row[1], rId=row[2], instance=row[3], hash=row[4], time=row[5])
         return None
 
+    def getExecutionByResolvedIdAndInstance(self, rId, instance):
+        """
+        Retrieve a process execution entry from the database by its resolved ID and instance number.
+
+        :param rId: The resolved process ID to search for.
+        :param instance: The instance number to search for.
+        :return: A ProcessExecutionEntry instance if found, None otherwise.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute(
+            "SELECT eId, tId, rId, instance, hash, time FROM ProcessExecutions WHERE rId = ? AND instance = ?;",
+            (rId, instance),
+        )
+        row = cursor.fetchone()
+
+        if row:
+            return ProcessExecutionEntry(eId=row[0], tId=row[1], rId=row[2], instance=row[3], hash=row[4], time=row[5])
+        return None
+
     def getAllProcessExecutions(self):
         """
         Retrieve all process execution entries from the database.

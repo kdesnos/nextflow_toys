@@ -73,6 +73,39 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertEqual(retrieved_execution.hash, "hash1")
         self.assertEqual(retrieved_execution.time, 123.45)
 
+    def test_getExecutionByResolvedIdAndInstance(self):
+        # Add process executions to the database
+        execution_entry_1 = ProcessExecutionEntry(
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45
+        )
+        execution_entry_2 = ProcessExecutionEntry(
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2, hash="hash2", time=456.78
+        )
+        self.execution_manager.addProcessExecution(execution_entry_1)
+        self.execution_manager.addProcessExecution(execution_entry_2)
+
+        # Retrieve the first execution by resolved ID and instance
+        retrieved_execution_1 = self.execution_manager.getExecutionByResolvedIdAndInstance(
+            self.resolved_entry.rId, 1
+        )
+        self.assertIsNotNone(retrieved_execution_1)
+        self.assertEqual(retrieved_execution_1.hash, "hash1")
+        self.assertEqual(retrieved_execution_1.instance, 1)
+
+        # Retrieve the second execution by resolved ID and instance
+        retrieved_execution_2 = self.execution_manager.getExecutionByResolvedIdAndInstance(
+            self.resolved_entry.rId, 2
+        )
+        self.assertIsNotNone(retrieved_execution_2)
+        self.assertEqual(retrieved_execution_2.hash, "hash2")
+        self.assertEqual(retrieved_execution_2.instance, 2)
+
+        # Attempt to retrieve a non-existent execution
+        non_existent_execution = self.execution_manager.getExecutionByResolvedIdAndInstance(
+            self.resolved_entry.rId, 3
+        )
+        self.assertIsNone(non_existent_execution)
+
     def test_addProcessExecutionWithInvalidTraceOrResolvedProcess(self):
         # Attempt to add a process execution with an invalid tId
         invalid_trace_execution = ProcessExecutionEntry(
