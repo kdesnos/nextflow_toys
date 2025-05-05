@@ -155,7 +155,7 @@ def extractExecutionParameters(file_path):
     - pd.DataFrame: A DataFrame containing the resolved process name and its associated input values.
     """
     # Define the regex pattern to match the relevant line
-    pattern = r"TRACE nextflow\.processor\.TaskProcessor - <([^\s]+)> Before run -- messages: \[(.*)"
+    pattern = r"TRACE nextflow\.processor\.TaskProcessor - Invoking task > ([^\s]+) with params=TaskStartParams\[id=[0-9]*; index=([0-9]*)\]; values=\[(.*)"
 
     # Initialize an empty list to store the extracted data
     data = []
@@ -181,6 +181,7 @@ def extractExecutionParameters(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
         multiline_buffer = None
         resolved_process_name = None
+        resolved_id = None
 
         for line in file:
             if multiline_buffer is not None:
@@ -190,6 +191,7 @@ def extractExecutionParameters(file_path):
                     # Parse the buffered input values
                     parsed_values = parse_values(multiline_buffer)
                     data.append({
+                        "resolved_id": resolved_id,
                         "resolved_process_name": resolved_process_name,
                         "input_values": parsed_values
                     })
@@ -200,12 +202,14 @@ def extractExecutionParameters(file_path):
             if match:
                 # Extract the resolved process name and start buffering input values
                 resolved_process_name = match.group(1)
-                multiline_buffer = match.group(2).strip()
+                resolved_id = match.group(2)
+                multiline_buffer = match.group(3).strip()
 
                 # If the line already ends with "]", parse it immediately
                 if multiline_buffer.endswith("]"):
                     parsed_values = parse_values(multiline_buffer)
                     data.append({
+                        "resolved_id": resolved_id,
                         "resolved_process_name": resolved_process_name,
                         "input_values": parsed_values
                     })
