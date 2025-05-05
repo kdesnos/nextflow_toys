@@ -144,3 +144,73 @@ def extractProcessInputs(file_path):
     return df
 
 
+def extractExecutionParameters(file_path):
+    """
+    Extracts execution parameters from a Nextflow log file and returns a pandas DataFrame.
+
+    Parameters:
+    - file_path (str): The path to the Nextflow log file.
+
+    Returns:
+    - pd.DataFrame: A DataFrame containing the resolved process name and its associated input values.
+    """
+    # Define the regex pattern to match the relevant line
+    pattern = r"TRACE nextflow\.processor\.TaskProcessor - <([^\s]+)> Before run -- messages: \[(.*)"
+
+    # Initialize an empty list to store the extracted data
+    data = []
+
+    def parse_values(value_string):
+        """
+        Parse the values, handling tuples as lists.
+
+        :param value_string: The string containing the values.
+        :return: A list of parsed values.
+        """
+        values = []
+        for value in re.findall(r"(\[.*?\]|[^\s,]+)", value_string):
+            if value.startswith("[") and value.endswith("]"):
+                # Parse nested tuples as lists
+                nested_values = re.findall(r"[^\s,\[\]]+", value[1:-1])
+                values.append(nested_values)
+            else:
+                values.append(value)
+        return values
+
+    # Open the file and search for the relevant lines
+    with open(file_path, 'r', encoding='utf-8') as file:
+        multiline_buffer = None
+        resolved_process_name = None
+
+        for line in file:
+            if multiline_buffer is not None:
+                # Append to the buffer until we find the closing bracket
+                multiline_buffer += line.strip()
+                if multiline_buffer.endswith("]"):
+                    # Parse the buffered input values
+                    parsed_values = parse_values(multiline_buffer)
+                    data.append({
+                        "resolved_process_name": resolved_process_name,
+                        "input_values": parsed_values
+                    })
+                    multiline_buffer = None  # Reset the buffer
+                continue
+
+            match = re.search(pattern, line)
+            if match:
+                # Extract the resolved process name and start buffering input values
+                resolved_process_name = match.group(1)
+                multiline_buffer = match.group(2).strip()
+
+                # If the line already ends with "]", parse it immediately
+                if multiline_buffer.endswith("]"):
+                    parsed_values = parse_values(multiline_buffer)
+                    data.append({
+                        "resolved_process_name": resolved_process_name,
+                        "input_values": parsed_values
+                    })
+                    multiline_buffer = None  # Reset the buffer
+
+    # Convert the data into a pandas DataFrame
+    df = pd.DataFrame(data)
+    return df
