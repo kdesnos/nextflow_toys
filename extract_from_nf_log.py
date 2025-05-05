@@ -96,6 +96,24 @@ def extractProcessInputs(file_path):
     # Initialize an empty list to store the extracted data
     data = []
 
+    def parse_arguments(arg_string):
+        """
+        Recursively parse arguments, handling nested tuples.
+
+        :param arg_string: The string containing arguments.
+        :return: A list of parsed arguments.
+        """
+        arguments = []
+        for arg in re.findall(r"(\w+):(\[.*?\]|[^\s,]+)", arg_string):
+            arg_type, arg_value = arg
+            if arg_value.startswith("[") and arg_value.endswith("]"):
+                # Parse nested arguments for tuples
+                nested_args = parse_arguments(arg_value[1:-1])  # Remove square brackets and parse recursively
+                arguments.append({"type": arg_type, "value": nested_args})
+            else:
+                arguments.append({"type": arg_type, "value": arg_value})
+        return arguments
+
     # Open the file and search for the relevant lines
     with open(file_path, 'r', encoding='utf-8') as file:
         for line in file:
@@ -107,20 +125,12 @@ def extractProcessInputs(file_path):
                 output_args = match.group(3)
 
                 # Parse the input arguments
-                inputs = []
-                for arg in re.findall(r"(\w+):(\[.*?\]|[^\s,]+)", input_args):
-                    arg_type, arg_value = arg
-                    if arg_value.startswith("[") and arg_value.endswith("]"):
-                        # Parse nested arguments for tuples
-                        nested_args = re.findall(r"(\w+):([^\s,\]]+)", arg_value[1:-1])
-                        inputs.append({"type": arg_type, "value": [{"type": t, "name": n} for t, n in nested_args]})
-                    else:
-                        inputs.append({"type": arg_type, "name": arg_value})
+                inputs = parse_arguments(input_args)
 
                 # Parse the output arguments
                 outputs = []
                 for arg in re.findall(r"(\w+):([^\s,]+)", output_args):
-                    outputs.append({"type": arg[0], "name": arg[1]})
+                    outputs.append({"type": arg[0], "value": arg[1]})
 
                 # Add the extracted data to the list
                 data.append({

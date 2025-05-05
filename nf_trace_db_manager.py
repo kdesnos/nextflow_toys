@@ -139,7 +139,7 @@ class NextflowTraceDBManager:
         """
         self.resolved_process_manager.addResolvedProcessNamesToTable(self, log_file_path)
 
-    def addProcessExecutionsFromHtml(self, html_file_path, trace_id = None):
+    def addProcessExecutionsFromHtml(self, html_file_path, trace_id=None):
         """
         Wrapper method to add process executions from an HTML file to the ProcessExecutions table.
 
@@ -147,6 +147,14 @@ class NextflowTraceDBManager:
         :param trace_id: Optionnaly, the Trace ID (tId) to associate with the process executions. If not provided, it will be retrieved from the HTML file.
         """
         self.process_executions_manager.addProcessExecutionsFromFile(self, html_file_path, trace_id)
+
+    def addProcessInputsFromLog(self, log_file_path):
+        """
+        Wrapper method to add process inputs from log file to the ProcessInputs table.
+
+        :param log_file_path: The path to the log file.
+        """
+        self.process_inputs_manager.addInputsFromLog(self, log_file_path)
 
 
 # Main prog
@@ -206,6 +214,12 @@ if __name__ == "__main__":
     print("All process executions:")
     for process_execution in all_process_executions:
         print(process_execution)
+
+    db_manager.addProcessInputsFromLog(log_file)
+    all_process_inputs = db_manager.process_inputs_manager.getAllProcessInputs()
+    print("All process inputs")
+    for process_input in all_process_inputs:
+        print(process_input)
 
     db_manager.close()
     print("Connection closed.")
