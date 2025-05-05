@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS ResolvedProcessNames (
 -- Table containing the list of input and output parameters of processes
 CREATE TABLE IF NOT EXISTS ProcessInputs (
 	pId INTEGER REFERENCES Processes (pId) ON DELETE CASCADE,
-	rank INTEGER NOT NULL,
+	rank TEXT NOT NULL,
 	type TEXT,
 	name TEXT NOT NULL,
 	
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS ProcessExecutions (
 -- executions listed in the ProcessExecutions table
 CREATE TABLE IF NOT EXISTS ProcessExecParams (
 	eId INTEGER REFERENCES ProcessExecutions (eId) ON DELETE CASCADE,
-	rank INTEGER NOT NULL,
+	rank TEXT NOT NULL,
 	value TEXT NOT NULL,
 	
 	Constraint PK_ProcessExecParams Primary Key (eId, rank)

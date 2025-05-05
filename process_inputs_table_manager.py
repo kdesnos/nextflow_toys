@@ -74,7 +74,7 @@ class ProcessInputEntry:
         Initialize a ProcessInputEntry instance.
 
         :param pId: Process ID (integer).
-        :param rank: Rank of the input (integer).
+        :param rank: Rank of the input (string).
         :param type: Type of the input (string).
         :param name: Name of the input (string).
         """
@@ -84,4 +84,4 @@ class ProcessInputEntry:
         self.name = name
 
     def __repr__(self):
-        return f"ProcessInputEntry(pId={self.pId}, rank={self.rank}, type='{self.type}', name='{self.name}')"
+        return f"ProcessInputEntry(pId={self.pId}, rank='{self.rank}', type='{self.type}', name='{self.name}')"

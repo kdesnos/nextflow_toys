@@ -21,13 +21,14 @@ class TestProcessInputsTableManager(unittest.TestCase):
         self.db_manager.close()
 
     def test_addProcessInput(self):
-        input_entry = ProcessInputEntry(pId=1, rank=0, type="input", name="input1")
+        input_entry = ProcessInputEntry(pId=1, rank='0', type="input", name="input1")
         self.inputs_manager.addProcessInput(input_entry)
 
         inputs = self.inputs_manager.getProcessInputsByProcessId(1)
         self.assertEqual(len(inputs), 1)
         self.assertEqual(inputs[0].name, "input1")
         self.assertEqual(inputs[0].type, "input")
+        self.assertEqual(inputs[0].rank, '0')
 
     def test_addProcessInputWithNonExistentPid(self):
         # Attempt to add a process input with a non-existent pId
@@ -37,8 +38,8 @@ class TestProcessInputsTableManager(unittest.TestCase):
 
     def test_addAllProcessInputs(self):
         input_entries = [
-            ProcessInputEntry(pId=1, rank=0, type="input", name="input1"),
-            ProcessInputEntry(pId=1, rank=1, type="input", name="input2"),
+            ProcessInputEntry(pId=1, rank='0', type="input", name="input1"),
+            ProcessInputEntry(pId=1, rank='1.1', type="input", name="input2"),
         ]
         self.inputs_manager.addAllProcessInputs(input_entries)
 
@@ -46,11 +47,12 @@ class TestProcessInputsTableManager(unittest.TestCase):
         self.assertEqual(len(inputs), 2)
         self.assertEqual(inputs[0].name, "input1")
         self.assertEqual(inputs[1].name, "input2")
+        self.assertEqual(inputs[1].rank, "1.1")
 
     def test_getProcessInputsByProcessId(self):
         input_entries = [
-            ProcessInputEntry(pId=1, rank=0, type="input", name="input1"),
-            ProcessInputEntry(pId=1, rank=1, type="input", name="input2"),
+            ProcessInputEntry(pId=1, rank='0', type="input", name="input1"),
+            ProcessInputEntry(pId=1, rank='1', type="input", name="input2"),
         ]
         self.inputs_manager.addAllProcessInputs(input_entries)
 
@@ -61,8 +63,8 @@ class TestProcessInputsTableManager(unittest.TestCase):
 
     def test_getAllProcessInputs(self):
         input_entries = [
-            ProcessInputEntry(pId=1, rank=0, type="input", name="input1"),
-            ProcessInputEntry(pId=1, rank=1, type="input", name="input2"),
+            ProcessInputEntry(pId=1, rank='0', type="input", name="input1"),
+            ProcessInputEntry(pId=1, rank='1.1', type="input", name="input2"),
         ]
         self.inputs_manager.addAllProcessInputs(input_entries)
 
@@ -72,7 +74,7 @@ class TestProcessInputsTableManager(unittest.TestCase):
         self.assertEqual(inputs[1].name, "input2")
 
     def test_removeProcessInput(self):
-        input_entry = ProcessInputEntry(pId=1, rank=0, type="input", name="input1")
+        input_entry = ProcessInputEntry(pId=1, rank="0", type="input", name="input1")
         self.inputs_manager.addProcessInput(input_entry)
 
         result = self.inputs_manager.removeProcessInput(1, 0)
