@@ -47,6 +47,21 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.execution_manager.addProcessExecution(execution_entry)
         self.assertNotEqual(execution_entry.eId, 0)  # eId should be updated after insertion
 
+    def test_addAllProcessExecutions(self):
+        executions = [
+            ProcessExecutionEntry(eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45),
+            ProcessExecutionEntry(eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2, hash="hash2", time=456.78),
+        ]
+        self.execution_manager.addAllProcessExecutions(executions)
+
+        # Verify that all executions were added to the database
+        all_executions = self.execution_manager.getAllProcessExecutions()
+        self.assertEqual(len(all_executions), 2)
+        self.assertEqual(all_executions[0].hash, "hash1")
+        self.assertEqual(all_executions[0].time, 123.45)
+        self.assertEqual(all_executions[1].hash, "hash2")
+        self.assertEqual(all_executions[1].time, 456.78)
+
     def test_getProcessExecutionByHash(self):
         execution_entry = ProcessExecutionEntry(
             eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45

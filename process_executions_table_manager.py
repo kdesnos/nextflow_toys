@@ -25,7 +25,16 @@ class ProcessExecutionTableManager:
         # Retrieve the last inserted row ID and update the execution_entry's eId
         execution_entry.eId = cursor.lastrowid
 
-    def addProcessExecutionsFromFile(self, trace_db_manager, file_path, trace_id= None):
+    def addAllProcessExecutions(self, execution_entries):
+        """
+        Add multiple process execution entries to the ProcessExecutions table in the SQLite database.
+
+        :param execution_entries: A collection of ProcessExecutionEntry instances.
+        """
+        for execution_entry in execution_entries:
+            self.addProcessExecution(execution_entry)
+
+    def addProcessExecutionsFromFile(self, trace_db_manager, file_path, trace_id=None):
         """
         Parse the content of a file using extract_trace_data and add the content to the ProcessExecutions table.
         Trace ID is automatically retrieved from the file and added to the appropriate table.
