@@ -212,6 +212,8 @@ def extractExecutionParameters(file_path):
                 multiline_buffer += line.strip()
                 if multiline_buffer.endswith("]"):
                     # Parse the buffered input values
+                    # Remove the trailing ']' before parsing
+                    multiline_buffer = multiline_buffer[:-1]
                     parsed_values = parse_values(multiline_buffer)
                     data.append({
                         "instance_number": instance_number,
@@ -230,6 +232,8 @@ def extractExecutionParameters(file_path):
 
                 # If the line already ends with "]", parse it immediately
                 if multiline_buffer.endswith("]"):
+                    # Remove the trailing ']' before parsing
+                    multiline_buffer = multiline_buffer[:-1]
                     parsed_values = parse_values(multiline_buffer)
                     data.append({
                         "instance_number": instance_number,
