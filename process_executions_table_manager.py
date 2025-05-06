@@ -17,8 +17,8 @@ class ProcessExecutionTableManager:
         """
         cursor = self.connection.cursor()
         cursor.execute(
-            "INSERT INTO ProcessExecutions (tId, rId, instance, hash, time) VALUES (?, ?, ?, ?, ?);",
-            (execution_entry.tId, execution_entry.rId, execution_entry.instance, execution_entry.hash, execution_entry.time),
+            "INSERT INTO ProcessExecutions (tId, rId, instance, hash, time, cpu) VALUES (?, ?, ?, ?, ?, ?);",
+            (execution_entry.tId, execution_entry.rId, execution_entry.instance, execution_entry.hash, execution_entry.time, execution_entry.cpu),
         )
         self.connection.commit()
 
@@ -70,7 +70,8 @@ class ProcessExecutionTableManager:
                 rId=resolved_entry.rId,
                 instance=instance,
                 hash=row["hash"],
-                time=row["realtime"].total_seconds() * 1000.0
+                time=row["realtime"].total_seconds() * 1000.0,
+                cpu=row["cpu_model"]
             )
             self.addProcessExecution(execution_entry)
 
@@ -82,11 +83,11 @@ class ProcessExecutionTableManager:
         :return: A ProcessExecutionEntry instance if found, None otherwise.
         """
         cursor = self.connection.cursor()
-        cursor.execute("SELECT eId, tId, rId, instance, hash, time FROM ProcessExecutions WHERE hash = ?;", (hash_value,))
+        cursor.execute("SELECT eId, tId, rId, instance, hash, time, cpu FROM ProcessExecutions WHERE hash = ?;", (hash_value,))
         row = cursor.fetchone()
 
         if row:
-            return ProcessExecutionEntry(eId=row[0], tId=row[1], rId=row[2], instance=row[3], hash=row[4], time=row[5])
+            return ProcessExecutionEntry(eId=row[0], tId=row[1], rId=row[2], instance=row[3], hash=row[4], time=row[5], cpu=row[6])
         return None
 
     def getExecutionByResolvedIdAndInstanceAndTraceId(self, rId, instance, tId):
@@ -100,13 +101,13 @@ class ProcessExecutionTableManager:
         """
         cursor = self.connection.cursor()
         cursor.execute(
-            "SELECT eId, tId, rId, instance, hash, time FROM ProcessExecutions WHERE rId = ? AND instance = ? AND tId = ?;",
+            "SELECT eId, tId, rId, instance, hash, time, cpu FROM ProcessExecutions WHERE rId = ? AND instance = ? AND tId = ?;",
             (rId, instance, tId),
         )
         row = cursor.fetchone()
 
         if row:
-            return ProcessExecutionEntry(eId=row[0], tId=row[1], rId=row[2], instance=row[3], hash=row[4], time=row[5])
+            return ProcessExecutionEntry(eId=row[0], tId=row[1], rId=row[2], instance=row[3], hash=row[4], time=row[5], cpu=row[6])
         return None
 
     def getAllProcessExecutions(self):
@@ -116,11 +117,11 @@ class ProcessExecutionTableManager:
         :return: A list of ProcessExecutionEntry instances.
         """
         cursor = self.connection.cursor()
-        cursor.execute("SELECT eId, tId, rId, instance, hash, time FROM ProcessExecutions;")
+        cursor.execute("SELECT eId, tId, rId, instance, hash, time, cpu FROM ProcessExecutions;")
         rows = cursor.fetchall()
 
         return [
-            ProcessExecutionEntry(eId=row[0], tId=row[1], rId=row[2], instance=row[3], hash=row[4], time=row[5])
+            ProcessExecutionEntry(eId=row[0], tId=row[1], rId=row[2], instance=row[3], hash=row[4], time=row[5], cpu=row[6])
             for row in rows
         ]
 
@@ -140,7 +141,7 @@ class ProcessExecutionTableManager:
 
 
 class ProcessExecutionEntry:
-    def __init__(self, eId, tId, rId, instance, hash, time):
+    def __init__(self, eId, tId, rId, instance, hash, time, cpu):
         """
         Initialize a ProcessExecutionEntry instance.
 
@@ -150,6 +151,7 @@ class ProcessExecutionEntry:
         :param instance: Instance number (integer).
         :param hash: Hash of the execution (string).
         :param time: Execution time in milliseconds (float).
+        :param cpu: Number of CPUs used (integer).
         """
         self.eId = eId
         self.tId = tId
@@ -157,9 +159,10 @@ class ProcessExecutionEntry:
         self.instance = instance
         self.hash = hash
         self.time = time
+        self.cpu = cpu
 
     def __repr__(self):
         return (
             f"ProcessExecutionEntry(eId={self.eId}, tId={self.tId}, rId={self.rId}, "
-            f"instance={self.instance}, hash='{self.hash}', time={self.time})"
+            f"instance={self.instance}, hash='{self.hash}', time={self.time}, cpu={self.cpu})"
         )

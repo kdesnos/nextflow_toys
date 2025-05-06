@@ -34,8 +34,8 @@ class TestProcessExecParamsTableManager(unittest.TestCase):
         # Add process execution entries
         self.db_manager.process_executions_manager.addAllProcessExecutions(
             [
-                ProcessExecutionEntry(eId=0, tId=1, rId=1, instance=1, hash="hash_1", time=123.45),
-                ProcessExecutionEntry(eId=0, tId=1, rId=1, instance=2, hash="hash_2", time=111.11)
+                ProcessExecutionEntry(eId=0, tId=1, rId=1, instance=1, hash="hash_1", time=123.45, cpu="Intel Core i7"),
+                ProcessExecutionEntry(eId=0, tId=1, rId=1, instance=2, hash="hash_2", time=111.11, cpu="AMD Ryzen 7")
             ]
         )
 
