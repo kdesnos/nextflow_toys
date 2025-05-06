@@ -1,4 +1,4 @@
-from extract_from_nf_log import extractExecutionParameters
+from extract_from_nf_log import extractExecutionParameters, extractRunName
 
 
 class ProcessExecParamsTableManager:
@@ -77,6 +77,17 @@ class ProcessExecParamsTableManager:
         :param trace_db_manager: An instance of NextflowTraceDBManager to resolve execution IDs.
         :param file_path: The path to the Nextflow log file.
         """
+
+        # Extract trace run name from the log file
+        run_name = extractRunName(file_path)
+        if run_name is None:
+            raise Exception(f"Trace run name not found in the log file '{file_path}'.")
+
+        # Get the trace ID from the database using the run name
+        trace_entry = trace_db_manager.trace_manager.getTraceEntry(run_name)
+        if trace_entry is None:
+            raise Exception(f"Trace '{run_name}' not found in the database.")
+
         # Extract execution parameters from the log file
         execution_params = extractExecutionParameters(file_path)
 
@@ -107,10 +118,11 @@ class ProcessExecParamsTableManager:
             if resolved_process_entry is None:
                 raise Exception(f"Process '{row['resolved_process_name']}' not found in ResolvedProcessNames table.")
 
-            # Retrieve the execution entry using the resolved process ID
-            execution_entry = trace_db_manager.process_executions_manager.getExecutionByResolvedIdAndInstance(resolved_process_entry.rId, row["instance_number"])
+            # Retrieve the execution entry using the resolved process ID and the trace_entry
+            execution_entry = trace_db_manager.process_executions_manager.getExecutionByResolvedIdAndInstanceAndTraceId(
+                resolved_process_entry.rId, row["instance_number"], trace_entry.tId)
             if execution_entry is None:
-                raise Exception(f"Execution for resolved process '{row['resolved_process_name']}' not found in ProcessExecutions table.")
+                raise Exception(f"Execution for resolved process '{row['resolved_process_name']}' not found in ProcessExecutions table for run {trace_entry.name}.")
 
             # Add all execution parameters (top-level and nested) to the database
             add_nested_params(execution_entry.eId, row["input_values"], base_rank="")

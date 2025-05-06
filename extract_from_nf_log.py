@@ -79,6 +79,29 @@ def extractResolvedProcessNames(file_path):
     df = pd.DataFrame(data)
     return df
 
+def extractRunName(file_path):
+    """
+    Extracts the run name from a Nextflow log file.
+
+    Parameters:
+    - file_path (str): The path to the Nextflow log file.
+
+    Returns:
+    - str: The extracted run name.
+    """
+    # Define the regex pattern to match the relevant line
+    pattern = r"DEBUG nextflow\.Session - Run name: (.+)"
+
+    # Open the file and search for the relevant line
+    with open(file_path, 'r', encoding='utf-8') as file:
+        for line in file:
+            match = re.search(pattern, line)
+            if match:
+                # Return the extracted run name
+                return match.group(1)
+
+    # Return None if no run name is found
+    return None
 
 def extractProcessInputs(file_path):
     """
