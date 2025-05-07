@@ -40,7 +40,7 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
     # Regular expressions to extract nodes, edges, and subgraphs
     node_pattern = re.compile(r'(\w+)[\[|\()|\"]+(.*?)[\"|\]|\)]+')
     edge_pattern = re.compile(r'(\w+) -->(?:\|(.*?)\|)? (\w+)')
-    subgraph_pattern = re.compile(r'subgraph\s+([\w\:]+|".*?")', re.DOTALL)
+    subgraph_pattern = re.compile(r'subgraph\s+"(([\w\:]+)?\s(\[.*\])?)"', re.DOTALL)
     factory_pattern = re.compile(r'Channel\..*')
 
     # Create a directed graph
@@ -72,6 +72,8 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
                 if subgraph_name == " ":
                     subgraph_name = f'unnamed_{anonymous_subgraph_count}'
                     anonymous_subgraph_count += 1
+                else:
+                    subgraph_name = subgraph_name_match.group(2)
             subgraph_stack.append(subgraph_name)
         elif line == 'end' and len(subgraph_stack) > 0:
             subgraph_stack.pop()
