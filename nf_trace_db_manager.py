@@ -7,6 +7,7 @@ from processes_table_manager import ProcessesTableManager
 from resolved_process_names_table_manager import ResolvedProcessNamesTableManager
 from process_executions_table_manager import ProcessExecutionTableManager
 from pipeline_params_table_manager import PipelineParamsTableManager
+from pipeline_param_values_table_manager import PipelineParamValuesTableManager
 
 
 class NextflowTraceDBManager:
@@ -20,11 +21,12 @@ class NextflowTraceDBManager:
         self.connection = None
         self.trace_manager = None
         self.process_manager = None
-        self.resolved_process_manager = None  # Add ResolvedProcessNamesTableManager attribute
+        self.resolved_process_manager = None
         self.process_executions_manager = None
         self.process_inputs_manager = None
         self.process_exec_params_manager = None
         self.pipeline_params_manager = None
+        self.pipeline_param_values_manager = None  # Add PipelineParamValuesTableManager attribute
 
     def connect(self):
         """
@@ -36,11 +38,12 @@ class NextflowTraceDBManager:
             self.connection.execute("PRAGMA foreign_keys = ON;")
             self.trace_manager = TraceTableManager(self.connection)
             self.process_manager = ProcessesTableManager(self.connection)
-            self.resolved_process_manager = ResolvedProcessNamesTableManager(self.connection)  # Initialize ResolvedProcessNamesTableManager
+            self.resolved_process_manager = ResolvedProcessNamesTableManager(self.connection)
             self.process_executions_manager = ProcessExecutionTableManager(self.connection)
             self.process_inputs_manager = ProcessInputsTableManager(self.connection)
             self.process_exec_params_manager = ProcessExecParamsTableManager(self.connection)
-            self.pipeline_params_manager = PipelineParamsTableManager(self.connection)  # Add PipelineParamsTableManager
+            self.pipeline_params_manager = PipelineParamsTableManager(self.connection)
+            self.pipeline_param_values_manager = PipelineParamValuesTableManager(self.connection)  # Initialize PipelineParamValuesTableManager
 
     def isConnected(self):
         """
@@ -178,6 +181,14 @@ class NextflowTraceDBManager:
         """
         self.pipeline_params_manager.addPipelineParamsFromLog(self, log_file_path)
 
+    def addPipelineParamValuesFromLog(self, log_file_path):
+        """
+        Wrapper method to add pipeline parameter values from a log file to the PipelineParamValues table.
+
+        :param log_file_path: The path to the log file.
+        """
+        self.pipeline_param_values_manager.addPipelineParamValuesFromLog(self, log_file_path)
+
 
 # Main prog
 if __name__ == "__main__":
@@ -253,6 +264,12 @@ if __name__ == "__main__":
     print("All pipeline parameters:")
     for param in all_pipeline_params:
         print(param)
+
+    db_manager.addPipelineParamValuesFromLog(log_file)
+    all_pipeline_param_values = db_manager.pipeline_param_values_manager.getAllPipelineParamValues()
+    print("All pipeline parameter values:")
+    for param_value in all_pipeline_param_values:
+        print(param_value)
 
     db_manager.close()
     print("Connection closed.")
