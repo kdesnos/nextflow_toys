@@ -79,6 +79,7 @@ def extractResolvedProcessNames(file_path):
     df = pd.DataFrame(data)
     return df
 
+
 def extractRunName(file_path):
     """
     Extracts the run name from a Nextflow log file.
@@ -102,6 +103,7 @@ def extractRunName(file_path):
 
     # Return None if no run name is found
     return None
+
 
 def extractProcessInputs(file_path):
     """
@@ -244,4 +246,92 @@ def extractExecutionParameters(file_path):
 
     # Convert the data into a pandas DataFrame
     df = pd.DataFrame(data)
+    return df
+
+
+def extractPipelineParameters(file_path):
+    """
+    Extracts pipeline parameters from a Nextflow log file and returns a pandas DataFrame.
+
+    Parameters:
+    - file_path (str): The path to the Nextflow log file.
+
+    Returns:
+    - pd.DataFrame: A DataFrame containing parameter names, their corresponding values, types, and reformatted values (if applicable).
+    """
+    parameters = []
+    inside_params_section = False
+
+    def parse_value(value):
+        """
+        Parses a value, converting it to the appropriate type (number, string, or list).
+
+        :param value: The string representation of the value.
+        :return: The parsed value, its type, and a reformatted value if applicable.
+        """
+        value = value.strip()
+        reformatted_value = None
+
+        # Handle lists in exotic formats
+        if value.startswith("'") and value.endswith("'") and " " in value:
+            # Space-separated values within single quotes
+            items = value.strip("'").split()
+            if all(item.isdigit() for item in items):
+                reformatted_value = [int(item) for item in items]
+                return value, "List[Integer]", reformatted_value
+            else:
+                reformatted_value = [item for item in items]
+                return value, "List[String]", reformatted_value
+        elif value.startswith("[") and value.endswith("]"):
+            # Standard list format
+            items = value[1:-1].split(",")
+            parsed_items = []
+            for item in items:
+                item = item.strip().strip("'\"")  # Remove quotes around each item
+                if item.isdigit():
+                    parsed_items.append(int(item))
+                else:
+                    parsed_items.append(item)
+            if all(isinstance(x, int) for x in parsed_items):
+                return value, "List[Integer]", parsed_items
+            return value, "List[String]", parsed_items
+        elif value.isdigit():
+            return value, "Integer", int(value)
+        elif value.strip('\'"').startswith("/"):
+            # Recognize paths starting with "/"
+            return value.strip('\'"'), "Path", value.strip('\'"')
+        try:
+            return value, "Real", float(value)
+        except ValueError:
+            if value.lower() in ["true", "false"]:
+                return value, "Boolean", value.lower() == "true"
+            else:
+                # Return as string (remove quotes if present)
+                return value.strip("\"'"), "String", value.strip("\"'")
+
+    with open(file_path, 'r', encoding='utf-8') as file:
+        for line in file:
+            stripped_line = line.strip()
+
+            if stripped_line == "params {":
+                inside_params_section = True
+                continue
+
+            if inside_params_section:
+                if stripped_line == "}":
+                    break
+
+                # Parse parameter line
+                if "=" in stripped_line:
+                    param_name, param_value = map(str.strip, stripped_line.split("=", 1))
+                    parsed_value, value_type, reformatted_value = parse_value(param_value)
+                    parameters.append({
+                        "param_name": param_name,
+                        "original_value": parsed_value,
+                        "type": value_type,
+                        "reformatted_value": reformatted_value
+                    })
+
+    # Convert the parameters into a pandas DataFrame
+    df = pd.DataFrame(parameters)
     return df
