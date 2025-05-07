@@ -6,6 +6,7 @@ from trace_table_manager import TraceTableManager
 from processes_table_manager import ProcessesTableManager
 from resolved_process_names_table_manager import ResolvedProcessNamesTableManager
 from process_executions_table_manager import ProcessExecutionTableManager
+from pipeline_params_table_manager import PipelineParamsTableManager
 
 
 class NextflowTraceDBManager:
@@ -23,6 +24,7 @@ class NextflowTraceDBManager:
         self.process_executions_manager = None
         self.process_inputs_manager = None
         self.process_exec_params_manager = None
+        self.pipeline_params_manager = None
 
     def connect(self):
         """
@@ -38,6 +40,7 @@ class NextflowTraceDBManager:
             self.process_executions_manager = ProcessExecutionTableManager(self.connection)
             self.process_inputs_manager = ProcessInputsTableManager(self.connection)
             self.process_exec_params_manager = ProcessExecParamsTableManager(self.connection)
+            self.pipeline_params_manager = PipelineParamsTableManager(self.connection)  # Add PipelineParamsTableManager
 
     def isConnected(self):
         """
@@ -167,6 +170,14 @@ class NextflowTraceDBManager:
         """
         self.process_exec_params_manager.addExecutionParamsFromLog(self, log_file_path)
 
+    def addPipelineParamsFromLog(self, log_file_path):
+        """
+        Wrapper method to add pipeline parameters from log file to the PipelineParams table.
+
+        :param log_file_path: The path to the log file.
+        """
+        self.pipeline_params_manager.addPipelineParamsFromLog(self, log_file_path)
+
 
 # Main prog
 if __name__ == "__main__":
@@ -232,9 +243,15 @@ if __name__ == "__main__":
     for process_input in all_process_inputs:
         print(process_input)
 
-    db_manager.addProcessExecParamsFromLog(log_file)
-    all_params = db_manager.process_exec_params_manager.getAllProcessExecParams()
-    for param in all_params:
+    # db_manager.addProcessExecParamsFromLog(log_file)
+    # all_params = db_manager.process_exec_params_manager.getAllProcessExecParams()
+    # for param in all_params:
+    #   print(param)
+
+    db_manager.addPipelineParamsFromLog(log_file)
+    all_pipeline_params = db_manager.pipeline_params_manager.getAllPipelineParams()
+    print("All pipeline parameters:")
+    for param in all_pipeline_params:
         print(param)
 
     db_manager.close()

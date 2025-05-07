@@ -161,9 +161,9 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         # Mock the extract_trace_data function
         mock_data = pd.DataFrame(
             [
-                {"name": "sub:a (1)", "hash": "hash1", "realtime": pd.Timedelta("123.45s"), "process": "main:a", "cpu": "Intel Core i5"},
-                {"name": "sub:a (2)", "hash": "hash2", "realtime": pd.Timedelta("456.78s"), "process": "main:a", "cpu": "AMD Ryzen 7"},
-                {"name": "proc", "hash": "hash3", "realtime": pd.Timedelta("987.65s"), "process": "proc", "cpu": "Intel Core i9"},
+                {"name": "sub:a (1)", "hash": "hash1", "realtime": pd.Timedelta("123.45s"), "process": "main:a", "cpu_model": "Intel Core i5"},
+                {"name": "sub:a (2)", "hash": "hash2", "realtime": pd.Timedelta("456.78s"), "process": "main:a", "cpu_model": "AMD Ryzen 7"},
+                {"name": "proc", "hash": "hash3", "realtime": pd.Timedelta("987.65s"), "process": "proc", "cpu_model": "Intel Core i9"},
             ]
         )
         mock_extract_trace_data.return_value = mock_data
