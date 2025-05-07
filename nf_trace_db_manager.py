@@ -193,32 +193,82 @@ class NextflowTraceDBManager:
         """
         Add all relevant data to the database from the given HTML and log files.
 
+        Adds are skipped if the corresponding TableManager is set to None or if its dependencies are not initialized.
+
+        Dependencies:
+        - Metadata addition requires TraceTableManager.
+        - Process definitions require ProcessesTableManager.
+        - Resolved process names require ResolvedProcessNamesTableManager and ProcessesTableManager.
+        - Process executions require ProcessExecutionTableManager, ResolvedProcessNamesTableManager, and TraceTableManager.
+        - Process inputs require ProcessInputsTableManager and ResolvedProcessNamesTableManager.
+        - Process execution parameters require ProcessExecParamsTableManager, ResolvedProcessNamesTableManager, ProcessExecutionTableManager, and TraceTableManager.
+        - Pipeline parameters require PipelineParamsTableManager.
+        - Pipeline parameter values require PipelineParamValuesTableManager, PipelineParamsTableManager, and TraceTableManager.
+
         :param html_file_path: The path to the HTML file.
         :param log_file_path: The path to the log file.
         """
         # Add metadata from the HTML file to the Traces table
-        tId = self.addMetadataFromHtml(html_file_path)
+        if self.trace_manager is not None:
+            tId = self.addMetadataFromHtml(html_file_path)
+        else:
+            print("Skipping metadata addition: TraceTableManager is not initialized.")
+            return
 
         # Add process definitions from the log file
-        self.addProcessDefinitionsFromLog(log_file_path)
+        if self.process_manager is not None:
+            self.addProcessDefinitionsFromLog(log_file_path)
+        else:
+            print("Skipping process definitions addition: ProcessesTableManager is not initialized.")
 
         # Add resolved process names from the log file
-        self.addResolvedProcessNamesFromLog(log_file_path)
+        if self.resolved_process_manager is not None and self.process_manager is not None:
+            self.addResolvedProcessNamesFromLog(log_file_path)
+        else:
+            print("Skipping resolved process names addition: ResolvedProcessNamesTableManager or ProcessesTableManager is not initialized.")
 
         # Add process executions from the HTML file
-        self.addProcessExecutionsFromHtml(html_file_path, tId)
+        if (
+            self.process_executions_manager is not None
+            and self.resolved_process_manager is not None
+            and self.trace_manager is not None
+        ):
+            self.addProcessExecutionsFromHtml(html_file_path, tId)
+        else:
+            print("Skipping process executions addition: ProcessExecutionTableManager, ResolvedProcessNamesTableManager, or TraceTableManager is not initialized.")
 
         # Add process inputs from the log file
-        self.addProcessInputsFromLog(log_file_path)
+        if self.process_inputs_manager is not None and self.resolved_process_manager is not None:
+            self.addProcessInputsFromLog(log_file_path)
+        else:
+            print("Skipping process inputs addition: ProcessInputsTableManager or ResolvedProcessNamesTableManager is not initialized.")
 
         # Add process execution parameters from the log file
-        self.addProcessExecParamsFromLog(log_file_path)
+        if (
+            self.process_exec_params_manager is not None
+            and self.resolved_process_manager is not None
+            and self.process_executions_manager is not None
+            and self.trace_manager is not None
+        ):
+            self.addProcessExecParamsFromLog(log_file_path)
+        else:
+            print("Skipping process execution parameters addition: ProcessExecParamsTableManager, ResolvedProcessNamesTableManager, ProcessExecutionTableManager, or TraceTableManager is not initialized.")
 
         # Add pipeline parameters from the log file
-        self.addPipelineParamsFromLog(log_file_path)
+        if self.pipeline_params_manager is not None:
+            self.addPipelineParamsFromLog(log_file_path)
+        else:
+            print("Skipping pipeline parameters addition: PipelineParamsTableManager is not initialized.")
 
         # Add pipeline parameter values from the log file
-        self.addPipelineParamValuesFromLog(log_file_path)
+        if (
+            self.pipeline_param_values_manager is not None
+            and self.pipeline_params_manager is not None
+            and self.trace_manager is not None
+        ):
+            self.addPipelineParamValuesFromLog(log_file_path)
+        else:
+            print("Skipping pipeline parameter values addition: PipelineParamValuesTableManager, PipelineParamsTableManager, or TraceTableManager is not initialized.")
 
     def printDBInfo(self):
         """
@@ -229,36 +279,44 @@ class NextflowTraceDBManager:
         print(f"Database user_version: {user_version}")
 
         # Retrieve and print the number of trace entries
-        trace_count = len(self.trace_manager.getAllTraces())
-        print(f"Number of trace entries: {trace_count}")
+        if self.trace_manager is not None:
+            trace_count = len(self.trace_manager.getAllTraces())
+            print(f"Number of trace entries: {trace_count}")
 
         # Retrieve and print the number of process entries
-        process_count = len(self.process_manager.getAllProcesses())
-        print(f"Number of process entries: {process_count}")
+        if self.process_manager is not None:
+            process_count = len(self.process_manager.getAllProcesses())
+            print(f"Number of process entries: {process_count}")
 
         # Retrieve and print the number of resolved process names
-        process_name_count = len(self.resolved_process_manager.getAllResolvedProcessNames())
-        print(f"Number of resolved process names: {process_name_count}")
+        if self.resolved_process_manager is not None:
+            process_name_count = len(self.resolved_process_manager.getAllResolvedProcessNames())
+            print(f"Number of resolved process names: {process_name_count}")
 
         # Retrieve and print the number of process executions
-        process_execution_count = len(self.process_executions_manager.getAllProcessExecutions())
-        print(f"Number of process executions: {process_execution_count}")
+        if self.process_executions_manager is not None:
+            process_execution_count = len(self.process_executions_manager.getAllProcessExecutions())
+            print(f"Number of process executions: {process_execution_count}")
 
         # Retrieve and print the number of process inputs
-        process_input_count = len(self.process_inputs_manager.getAllProcessInputs())
-        print(f"Number of process inputs: {process_input_count}")
+        if self.process_inputs_manager is not None:
+            process_input_count = len(self.process_inputs_manager.getAllProcessInputs())
+            print(f"Number of process inputs: {process_input_count}")
 
         # Retrieve and print the number of process execution parameters
-        process_exec_param_count = len(self.process_exec_params_manager.getAllProcessExecParams())
-        print(f"Number of process execution parameters: {process_exec_param_count}")
+        if self.process_exec_params_manager is not None:
+            process_exec_param_count = len(self.process_exec_params_manager.getAllProcessExecParams())
+            print(f"Number of process execution parameters: {process_exec_param_count}")
 
         # Retrieve and print the number of pipeline parameters
-        pipeline_param_count = len(self.pipeline_params_manager.getAllPipelineParams())
-        print(f"Number of pipeline parameters: {pipeline_param_count}")
+        if self.pipeline_params_manager is not None:
+            pipeline_param_count = len(self.pipeline_params_manager.getAllPipelineParams())
+            print(f"Number of pipeline parameters: {pipeline_param_count}")
 
         # Retrieve and print the number of pipeline parameter values
-        pipeline_param_value_count = len(self.pipeline_param_values_manager.getAllPipelineParamValues())
-        print(f"Number of pipeline parameter values: {pipeline_param_value_count}")
+        if self.pipeline_param_values_manager is not None:
+            pipeline_param_value_count = len(self.pipeline_param_values_manager.getAllPipelineParamValues())
+            print(f"Number of pipeline parameter values: {pipeline_param_value_count}")
 
 
 # Main prog
