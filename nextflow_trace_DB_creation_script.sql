@@ -62,3 +62,19 @@ CREATE TABLE IF NOT EXISTS ProcessExecParams (
 	
 	Constraint PK_ProcessExecParams Primary Key (eId, rank)
 );
+
+-- PipelineParams table containing the list of parameters at pipeline level
+CREATE TABLE IF NOT EXISTS PipelineParams (
+	paramId INTEGER PRIMARY KEY NOT NULL,
+	name TEXT NOT NULL UNIQUE,
+	type TEXT NOT NULL
+);
+
+-- PipelineParamValues table contains the values of pipeline params for a given run.
+CREATE TABLE IF NOT EXISTS PipelineParamValues (
+	paramId INTEGER REFERENCES PipelineParams (paramId) ON DELETE CASCADE,
+	tId INTEGER REFERENCES Traces (tId) ON DELETE CASCADE,
+	value TEXT NOT NULL,
+
+	Constraint PK_PipelineParamValues Primary Key (paramId, tId)
+);
