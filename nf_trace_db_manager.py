@@ -189,6 +189,77 @@ class NextflowTraceDBManager:
         """
         self.pipeline_param_values_manager.addPipelineParamValuesFromLog(self, log_file_path)
 
+    def addAllFromFiles(self, html_file_path, log_file_path):
+        """
+        Add all relevant data to the database from the given HTML and log files.
+
+        :param html_file_path: The path to the HTML file.
+        :param log_file_path: The path to the log file.
+        """
+        # Add metadata from the HTML file to the Traces table
+        tId = self.addMetadataFromHtml(html_file_path)
+
+        # Add process definitions from the log file
+        self.addProcessDefinitionsFromLog(log_file_path)
+
+        # Add resolved process names from the log file
+        self.addResolvedProcessNamesFromLog(log_file_path)
+
+        # Add process executions from the HTML file
+        self.addProcessExecutionsFromHtml(html_file_path, tId)
+
+        # Add process inputs from the log file
+        self.addProcessInputsFromLog(log_file_path)
+
+        # Add process execution parameters from the log file
+        self.addProcessExecParamsFromLog(log_file_path)
+
+        # Add pipeline parameters from the log file
+        self.addPipelineParamsFromLog(log_file_path)
+
+        # Add pipeline parameter values from the log file
+        self.addPipelineParamValuesFromLog(log_file_path)
+
+    def printDBInfo(self):
+        """
+        Print information about the database, including counts of various entries.
+        """
+        # Retrieve and print the user_version of the database
+        user_version = self.getUserVersion()
+        print(f"Database user_version: {user_version}")
+
+        # Retrieve and print the number of trace entries
+        trace_count = len(self.trace_manager.getAllTraces())
+        print(f"Number of trace entries: {trace_count}")
+
+        # Retrieve and print the number of process entries
+        process_count = len(self.process_manager.getAllProcesses())
+        print(f"Number of process entries: {process_count}")
+
+        # Retrieve and print the number of resolved process names
+        process_name_count = len(self.resolved_process_manager.getAllResolvedProcessNames())
+        print(f"Number of resolved process names: {process_name_count}")
+
+        # Retrieve and print the number of process executions
+        process_execution_count = len(self.process_executions_manager.getAllProcessExecutions())
+        print(f"Number of process executions: {process_execution_count}")
+
+        # Retrieve and print the number of process inputs
+        process_input_count = len(self.process_inputs_manager.getAllProcessInputs())
+        print(f"Number of process inputs: {process_input_count}")
+
+        # Retrieve and print the number of process execution parameters
+        process_exec_param_count = len(self.process_exec_params_manager.getAllProcessExecParams())
+        print(f"Number of process execution parameters: {process_exec_param_count}")
+
+        # Retrieve and print the number of pipeline parameters
+        pipeline_param_count = len(self.pipeline_params_manager.getAllPipelineParams())
+        print(f"Number of pipeline parameters: {pipeline_param_count}")
+
+        # Retrieve and print the number of pipeline parameter values
+        pipeline_param_value_count = len(self.pipeline_param_values_manager.getAllPipelineParamValues())
+        print(f"Number of pipeline parameter values: {pipeline_param_value_count}")
+
 
 # Main prog
 if __name__ == "__main__":
@@ -206,70 +277,16 @@ if __name__ == "__main__":
         db_manager.createTables(force=True)
     print("Tables created successfully.")
 
-    # Retrieve and print the user_version of the database
-    user_version = db_manager.getUserVersion()
-    print(f"Database user_version: {user_version}")
-
     # Add metadata from an HTML file to the Traces table
-    html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-02-21_15_23_50_report.html"
-    db_manager.addMetadataFromHtml(html_file_path)
     html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_report.html"
-    # Not added, as it will automatically be when adding traces.
-
-    # Retrieve all trace entries
-    all_traces = db_manager.trace_manager.getAllTraces()
-    print("All trace entries:")
-    for trace in all_traces:
-        print(trace)
 
     # Add process definitions
     log_file = "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_nextflow_logs.log"
-    db_manager.addProcessDefinitionsFromLog(log_file)
 
-    # Retrieve all process entries
-    all_processes = db_manager.process_manager.getAllProcesses()
-    print("All process entries:")
-    for process in all_processes:
-        print(process)
-
-    db_manager.addResolvedProcessNamesFromLog(log_file)
-
-    # Retrieve all resolved process names
-    all_process_names = db_manager.resolved_process_manager.getAllResolvedProcessNames()
-    print("All resolved process names:")
-    for process_name in all_process_names:
-        print(process_name)
-
-    db_manager.addProcessExecutionsFromHtml(html_file_path)
-
-    # Retrieve all process executions names
-    all_process_executions = db_manager.process_executions_manager.getAllProcessExecutions()
-    print("All process executions:")
-    for process_execution in all_process_executions:
-        print(process_execution)
-
-    db_manager.addProcessInputsFromLog(log_file)
-    all_process_inputs = db_manager.process_inputs_manager.getAllProcessInputs()
-    print("All process inputs")
-    for process_input in all_process_inputs:
-        print(process_input)
-
-    # db_manager.addProcessExecParamsFromLog(log_file)
-    # all_params = db_manager.process_exec_params_manager.getAllProcessExecParams()
-    # for param in all_params:
-    #   print(param)
-
-    db_manager.addPipelineParamsFromLog(log_file)
-    all_pipeline_params = db_manager.pipeline_params_manager.getAllPipelineParams()
-    print("All pipeline parameters:")
-    for param in all_pipeline_params:
-        print(param)
-
-    db_manager.addPipelineParamValuesFromLog(log_file)
-    all_pipeline_param_values = db_manager.pipeline_param_values_manager.getAllPipelineParamValues()
-    print("All pipeline parameter values:")
-    for param_value in all_pipeline_param_values:
-        print(param_value)
+    db_manager.addAllFromFiles(html_file_path, log_file)
+    
+    # Print database information
+    db_manager.printDBInfo()
 
     db_manager.close()
     print("Connection closed.")

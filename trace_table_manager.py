@@ -98,7 +98,6 @@ class TraceTableManager:
 
         # Add the trace entry to the Traces table
         self.addTraceEntry(trace_entry)
-        print(f"Metadata added to Traces table: {trace_entry}")  
         return trace_entry.tId          
 
 
