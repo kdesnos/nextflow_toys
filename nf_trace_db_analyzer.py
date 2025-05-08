@@ -3,12 +3,14 @@ from nf_trace_db_manager import NextflowTraceDBManager
 
 
 def check_all_processes_execution_time(
-    db_manager, 
-    tolerance=0.1, 
+    db_manager,
+    tolerance=0.1,
     std_dev_threshold=15000,  # Default threshold updated to 15 seconds (15000 milliseconds)
-    process_names=None, 
-    resolved_process_names=None, 
-    group_by_resolved_name=False
+    process_names=None,
+    resolved_process_names=None,
+    trace_names=None,
+    group_by_resolved_name=False,
+    group_by_trace_name=False
 ):
     """
     Check if the execution time for every process in the Processes table is constant, ignoring outliers.
@@ -18,16 +20,31 @@ def check_all_processes_execution_time(
     :param std_dev_threshold: The absolute threshold for the standard deviation (default: 15000 milliseconds or 15 seconds).
     :param process_names: Optional list of process names to filter the results. If None, all processes are included.
     :param resolved_process_names: Optional list of resolved process names to filter the results. If None, all resolved processes are included.
-    :param group_by_resolved_name: If True, group results by resolved process names instead of process names.
-    :return: A Pandas DataFrame with process names (or resolved names), computed statistics, and constancy criteria.
+    :param trace_names: Optional list of trace names to filter the results. If None, all traces are included.
+    :param group_by_resolved_name: If True, include resolved process names in the grouping.
+    :param group_by_trace_name: If True, include trace names in the grouping.
+    :return: A Pandas DataFrame with grouped results, computed statistics, and constancy criteria.
     """
-    # SQL query to retrieve execution times and process names or resolved names
-    group_column = "rpn.name AS resolved_name" if group_by_resolved_name else "p.name AS process_name"
+    # Determine the grouping columns
+    grouping_columns = []
+    if group_by_trace_name:
+        grouping_columns.append("t.name AS trace_name")
+    if group_by_resolved_name:
+        grouping_columns.append("rpn.name AS resolved_name")
+    if not grouping_columns:
+        grouping_columns.append("p.name AS process_name")
+
+    group_column = ", ".join(grouping_columns)
+
+    # SQL query to retrieve execution times and grouping columns
     query = f"""
         SELECT {group_column}, pe.time
         FROM Processes p
-        LEFT JOIN ResolvedProcessNames rpn ON p.pId = rpn.pId
-        LEFT JOIN ProcessExecutions pe ON rpn.rId = pe.rId
+        LEFT JOIN (
+            ResolvedProcessNames rpn
+            JOIN ProcessExecutions pe ON rpn.rId = pe.rId
+        ) ON rpn.pId = p.pId
+        LEFT JOIN Traces t ON pe.tId = t.tId
     """
 
     # Add WHERE clauses for filtering
@@ -44,6 +61,11 @@ def check_all_processes_execution_time(
         filters.append(f"rpn.name IN ({placeholders})")
         params.extend(resolved_process_names)
 
+    if trace_names:
+        placeholders = ",".join("?" for _ in trace_names)
+        filters.append(f"t.name IN ({placeholders})")
+        params.extend(trace_names)
+
     if filters:
         query += " WHERE " + " AND ".join(filters)
 
@@ -53,22 +75,29 @@ def check_all_processes_execution_time(
     results = cursor.fetchall()
 
     # Create a Pandas DataFrame from the query results
-    column_name = "resolved_name" if group_by_resolved_name else "process_name"
-    df = pd.DataFrame(results, columns=[column_name, "time"])
+    column_names = ["trace_name" if group_by_trace_name else None,
+                    "resolved_name" if group_by_resolved_name else None,
+                    "process_name" if not group_by_trace_name and not group_by_resolved_name else None]
+    column_names = [col for col in column_names if col is not None] + ["time"]
+    df = pd.DataFrame(results, columns=column_names)
 
     # Remove outliers using the IQR method for each group
     def remove_outliers(group):
-        q1 = group["time"].quantile(0.25)
-        q3 = group["time"].quantile(0.75)
+        q1 = group.quantile(0.25)
+        q3 = group.quantile(0.75)
         iqr = q3 - q1
         lower_bound = q1 - 1.5 * iqr
         upper_bound = q3 + 1.5 * iqr
-        return group[(group["time"] >= lower_bound) & (group["time"] <= upper_bound)]
+        return group[(group >= lower_bound) & (group <= upper_bound)]
 
-    df = df.groupby(column_name, group_keys=False).apply(remove_outliers)
+    group_cols = column_names[:-1]
 
-    # Group by the selected column and compute statistics
-    grouped = df.groupby(column_name)["time"]
+    # Apply outlier removal to the 'time' column only, then merge back with group columns
+    df["time"] = df.groupby(group_cols)["time"].transform(remove_outliers)
+    # df = df.dropna(subset=["time"])
+
+    # Group by the selected columns and compute statistics
+    grouped = df.groupby(column_names[:-1])["time"]
     stats = grouped.agg(
         mean_time="mean",
         std_dev_time="std",
@@ -82,11 +111,6 @@ def check_all_processes_execution_time(
     stats["is_constant"] = (
         (stats["coefficient_of_variation"] <= tolerance) | (stats["std_dev_time"] <= std_dev_threshold)
     )
-
-    # Reorder the columns
-    stats = stats[
-        [column_name, "execution_count", "is_constant", "mean_time", "std_dev_time", "coefficient_of_variation"]
-    ]
 
     return stats
 
@@ -123,7 +147,7 @@ if __name__ == "__main__":
     results_python = check_all_processes_execution_time(db_manager)
     print(results_python)
 
-    results_python = check_all_processes_execution_time(db_manager, process_names=["do_correlation"], group_by_resolved_name=True)
+    results_python = check_all_processes_execution_time(db_manager, process_names=["do_correlation"])
     print(results_python)
 
     db_manager.close()
