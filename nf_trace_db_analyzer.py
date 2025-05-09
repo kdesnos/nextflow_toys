@@ -148,30 +148,19 @@ def identify_process_execution_time_consistency(
     :param std_dev_threshold: The absolute threshold for the standard deviation.
     :param quantile: The quantile range for outlier removal (default: 0.80, meaning 0.1 and 0.9 are used for IQR).
     """
-    # Identify processes with at least one execution time
-    query = """
-        SELECT DISTINCT p.name AS process_name  
-        FROM Processes p
-        JOIN ResolvedProcessNames rpn ON p.pId = rpn.pId
-        JOIN ProcessExecutions pe ON rpn.rId = pe.rId
-    """
-
-    cursor = db_manager.connection.cursor()
-    cursor.execute(query)   
-    results = cursor.fetchall()
-    executed_process_names = [row[0] for row in results]
-
+ 
     # Identify processes with consistent execution times
     process_consistency_analysis = analyze_process_execution_time_consistency(
-        db_manager, tolerance, std_dev_threshold, process_names=executed_process_names, quantile=quantile
+        db_manager, tolerance, std_dev_threshold, quantile=quantile
     )
-    consistent_processes = process_consistency_analysis[process_consistency_analysis["is_constant"] == True]
+    executed_process_analysis = process_consistency_analysis[~process_consistency_analysis["mean_time"].isna()]
+    consistent_processes = executed_process_analysis[executed_process_analysis["is_constant"] == True]
     print(f"\n## Consistent processes: {len(consistent_processes)}")
-    print(process_consistency_analysis.sort_values(by=["is_constant", "process_name"], ascending=[False, True]))
+    print(executed_process_analysis.sort_values(by=["is_constant", "process_name"], ascending=[False, True]))
 
     # For processes with inconsistent execution times, check consistency per trace
     # Filter processes that are not consistent in the first analysis
-    inconsistent_processes = process_consistency_analysis[process_consistency_analysis["is_constant"] == False][
+    inconsistent_processes = executed_process_analysis[executed_process_analysis["is_constant"] == False][
         "process_name"
     ].unique()
 
@@ -230,13 +219,9 @@ def identify_process_execution_time_consistency(
 
 
     # Print processes that are never executed
-    all_processes = db_manager.process_manager.getAllProcesses()
-    never_executed_processes = [process.name for process in all_processes if process.name not in executed_process_names]
-    print(f"\n## Processes that are never executed: {len(never_executed_processes)}")
-    if never_executed_processes:
-        print("\t" + ", ".join(never_executed_processes))
-    else:
-        print("\tNone")
+    unexecuted_processes = process_consistency_analysis[process_consistency_analysis["mean_time"].isna()]
+    print(f"\n## Processes that are never executed: {len(unexecuted_processes)}")
+    print(unexecuted_processes.sort_values(by=["process_name"], ascending=[True]))
 
 
 if __name__ == "__main__":
