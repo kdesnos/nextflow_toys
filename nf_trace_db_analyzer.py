@@ -2,7 +2,7 @@ import pandas as pd
 from nf_trace_db_manager import NextflowTraceDBManager
 
 
-def check_all_processes_execution_time(
+def analyze_process_execution_time_consistency(
     db_manager,
     tolerance=0.1,
     std_dev_threshold=15000,
@@ -13,7 +13,7 @@ def check_all_processes_execution_time(
     group_by_trace_name=False
 ):
     """
-    Check if the execution time for every process in the Processes table is constant, ignoring outliers.
+    Analyze the consistency of execution times for processes in the Processes table, ignoring outliers.
 
     :param db_manager: An instance of NextflowTraceDBManager.
     :param tolerance: The relative tolerance (default: 0.1, i.e., 10%) for the coefficient of variation.
@@ -73,12 +73,13 @@ def check_all_processes_execution_time(
     df = pd.DataFrame(results, columns=column_names)
 
     # Remove outliers using the IQR method for each group
+    # with the 1st and 9th deciles as the lower and upper bounds
     def remove_outliers(group):
-        q1 = group.quantile(0.25)
-        q3 = group.quantile(0.75)
-        iqr = q3 - q1
-        lower_bound = q1 - 1.5 * iqr
-        upper_bound = q3 + 1.5 * iqr
+        d1 = group.quantile(0.10)
+        d9 = group.quantile(0.90)
+        iqr = d9 - d1
+        lower_bound = d1 - 1.5 * iqr
+        upper_bound = d9 + 1.5 * iqr
         return group[(group >= lower_bound) & (group <= upper_bound)]
 
     # Determine the grouping columns
@@ -166,21 +167,20 @@ if __name__ == "__main__":
 
     # Print database information
     db_manager.printDBInfo()
-
-    results_python = check_all_processes_execution_time(db_manager)
+    results_python = analyze_process_execution_time_consistency(db_manager)
     print(results_python)
 
-    results_python = check_all_processes_execution_time(db_manager, process_names=["do_correlation"], group_by_resolved_name=True)
+    results_python = analyze_process_execution_time_consistency(db_manager, process_names=["do_correlation"], group_by_resolved_name=True)
     print(results_python)
 
-    results_python = check_all_processes_execution_time(
+    results_python = analyze_process_execution_time_consistency(
         db_manager,
         process_names=["do_correlation"],
         group_by_resolved_name=False,
         group_by_trace_name=True)
     print(results_python)
 
-    results_python = check_all_processes_execution_time(
+    results_python = analyze_process_execution_time_consistency(
         db_manager,
         process_names=["do_correlation"],
         group_by_resolved_name=True,
