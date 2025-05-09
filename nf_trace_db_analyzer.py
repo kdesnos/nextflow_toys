@@ -5,7 +5,7 @@ from nf_trace_db_manager import NextflowTraceDBManager
 def check_all_processes_execution_time(
     db_manager,
     tolerance=0.1,
-    std_dev_threshold=15000,  # Default threshold updated to 15 seconds (15000 milliseconds)
+    std_dev_threshold=15000,
     process_names=None,
     resolved_process_names=None,
     trace_names=None,
@@ -25,20 +25,14 @@ def check_all_processes_execution_time(
     :param group_by_trace_name: If True, include trace names in the grouping.
     :return: A Pandas DataFrame with grouped results, computed statistics, and constancy criteria.
     """
-    # Determine the grouping columns
-    grouping_columns = []
-    if group_by_trace_name:
-        grouping_columns.append("t.name AS trace_name")
-    if group_by_resolved_name:
-        grouping_columns.append("rpn.name AS resolved_name")
-    if not grouping_columns:
-        grouping_columns.append("p.name AS process_name")
-
-    group_column = ", ".join(grouping_columns)
-
     # SQL query to retrieve execution times and grouping columns
     query = f"""
-        SELECT {group_column}, pe.time
+        SELECT
+            p.name AS process_name,
+            rpn.name AS resolved_name,
+            t.name AS trace_name,
+            pe.cpu,
+            pe.time
         FROM Processes p
         LEFT JOIN (
             ResolvedProcessNames rpn
@@ -75,10 +69,7 @@ def check_all_processes_execution_time(
     results = cursor.fetchall()
 
     # Create a Pandas DataFrame from the query results
-    column_names = ["trace_name" if group_by_trace_name else None,
-                    "resolved_name" if group_by_resolved_name else None,
-                    "process_name" if not group_by_trace_name and not group_by_resolved_name else None]
-    column_names = [col for col in column_names if col is not None] + ["time"]
+    column_names = ["process_name", "resolved_name", "trace_name", "cpu", "time"]
     df = pd.DataFrame(results, columns=column_names)
 
     # Remove outliers using the IQR method for each group
@@ -90,14 +81,22 @@ def check_all_processes_execution_time(
         upper_bound = q3 + 1.5 * iqr
         return group[(group >= lower_bound) & (group <= upper_bound)]
 
-    group_cols = column_names[:-1]
+    # Determine the grouping columns
+    group_cols = []
+    if group_by_trace_name:
+        group_cols.append("trace_name")
+    if group_by_resolved_name:
+        group_cols.append("resolved_name")
+        group_cols.append("process_name")  # Include process_name to retain it when grouping by resolved_name
+    else:
+        group_cols.append("process_name")  # Default to grouping by process_name if resolved_name is not activated
+    group_cols.append("cpu")  # Always group by cpu
 
-    # Apply outlier removal to the 'time' column only, then merge back with group columns
+    # Apply outlier removal to the 'time' column only
     df["time"] = df.groupby(group_cols)["time"].transform(remove_outliers)
-    # df = df.dropna(subset=["time"])
 
     # Group by the selected columns and compute statistics
-    grouped = df.groupby(column_names[:-1])["time"]
+    grouped = df.groupby(group_cols)["time"]
     stats = grouped.agg(
         mean_time="mean",
         std_dev_time="std",
@@ -111,6 +110,18 @@ def check_all_processes_execution_time(
     stats["is_constant"] = (
         (stats["coefficient_of_variation"] <= tolerance) | (stats["std_dev_time"] <= std_dev_threshold)
     )
+
+    # Ensure all required columns are present in the DataFrame
+    if "trace_name" not in stats:
+        stats["trace_name"] = "*"
+    if "resolved_name" not in stats:
+        stats["resolved_name"] = "*"
+
+    # Reorder the columns to match the specified order
+    stats = stats[
+        ["trace_name", "process_name", "resolved_name", "is_constant", "execution_count",
+         "mean_time", "std_dev_time", "coefficient_of_variation", "cpu"]
+    ]
 
     return stats
 
@@ -130,16 +141,28 @@ if __name__ == "__main__":
         db_manager.createTables(force=True)
     print("Tables created successfully.")
 
-    # Add metadata from an HTML file to the Traces table
-    html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_report.html"
-    # Add process definitions
-    log_file = "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_nextflow_logs.log"
-
     # Ignore ParamInputs and ExecParams for now to speed up tests
     db_manager.process_inputs_manager = None
     db_manager.process_exec_params_manager = None
 
-    db_manager.addAllFromFiles(html_file_path, log_file)
+    # List of HTML and log file paths to load into the database
+    files_to_load = [
+        {
+            "html_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_report.html",
+            "log_file": "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_log.log"
+        },
+        {
+            "html_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250313_2025-05-08_10_36_28_report.html",
+            "log_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250313_2025-05-08_10_36_28_log.log"
+        }
+        # Add more file pairs as needed
+    ]
+
+    # Iterate over the list of files and load them into the database
+    for file_pair in files_to_load:
+        html_file_path = file_pair["html_file"]
+        log_file_path = file_pair["log_file"]
+        db_manager.addAllFromFiles(html_file_path, log_file_path)
 
     # Print database information
     db_manager.printDBInfo()
@@ -147,7 +170,21 @@ if __name__ == "__main__":
     results_python = check_all_processes_execution_time(db_manager)
     print(results_python)
 
-    results_python = check_all_processes_execution_time(db_manager, process_names=["do_correlation"])
+    results_python = check_all_processes_execution_time(db_manager, process_names=["do_correlation"], group_by_resolved_name=True)
+    print(results_python)
+
+    results_python = check_all_processes_execution_time(
+        db_manager,
+        process_names=["do_correlation"],
+        group_by_resolved_name=False,
+        group_by_trace_name=True)
+    print(results_python)
+
+    results_python = check_all_processes_execution_time(
+        db_manager,
+        process_names=["do_correlation"],
+        group_by_resolved_name=True,
+        group_by_trace_name=True)
     print(results_python)
 
     db_manager.close()
