@@ -133,33 +133,30 @@ def analyze_process_execution_time_consistency(
 
     return stats
 
+
 def identify_process_execution_time_consistency(
     db_manager,
     tolerance=0.1,
     std_dev_threshold=15000,
-    quantile=0.80  # Default quantile value
+    quantile=0.80
 ):
     """
     Identify processes with consistent execution times based on the specified criteria.
-    This function is a wrapper around the analyze_process_execution_time_consistency function.
+    This function does not print anything and returns the analysis tables.
 
     :param db_manager: An instance of NextflowTraceDBManager.
     :param tolerance: The relative tolerance for the coefficient of variation.
     :param std_dev_threshold: The absolute threshold for the standard deviation.
     :param quantile: The quantile range for outlier removal (default: 0.80, meaning 0.1 and 0.9 are used for IQR).
+    :return: A tuple of DataFrames: process_consistency_analysis, per_trace_analysis, per_resolved_analysis, per_resolved_per_trace_analysis.
     """
- 
     # Identify processes with consistent execution times
     process_consistency_analysis = analyze_process_execution_time_consistency(
         db_manager, tolerance, std_dev_threshold, quantile=quantile
     )
     executed_process_analysis = process_consistency_analysis[~process_consistency_analysis["mean_time"].isna()]
-    consistent_processes = executed_process_analysis[executed_process_analysis["is_constant"] == True]
-    print(f"\n## Consistent processes: {len(consistent_processes)}")
-    print(executed_process_analysis.sort_values(by=["is_constant", "process_name"], ascending=[False, True]))
 
     # For processes with inconsistent execution times, check consistency per trace
-    # Filter processes that are not consistent in the first analysis
     inconsistent_processes = executed_process_analysis[executed_process_analysis["is_constant"] == False][
         "process_name"
     ].unique()
@@ -168,7 +165,7 @@ def identify_process_execution_time_consistency(
     per_trace_analysis = analyze_process_execution_time_consistency(
         db_manager, tolerance, std_dev_threshold, process_names=inconsistent_processes, group_by_trace_name=True, quantile=quantile
     )
-    
+
     # Identify processes that are consistent across all traces
     consistent_processes_per_trace = (
         per_trace_analysis.groupby("process_name")["is_constant"]
@@ -176,7 +173,7 @@ def identify_process_execution_time_consistency(
         .reset_index()
         .rename(columns={"is_constant": "is_consistent_per_trace"})
     )
-    
+
     # Filter only processes that are consistent per trace
     consistent_processes_per_trace = consistent_processes_per_trace[
         consistent_processes_per_trace["is_consistent_per_trace"] == True
@@ -184,10 +181,6 @@ def identify_process_execution_time_consistency(
 
     # Filter the per_trace_analysis table to include only rows with process_name in consistent_processes_per_trace
     per_trace_analysis["is_constant_per_trace"] = per_trace_analysis["process_name"].isin(consistent_processes_per_trace["process_name"])
-    
-
-    print(f"\n## Processes consistent within each individual traces: {len(consistent_processes_per_trace)}")
-    print(per_trace_analysis.sort_values(by=["is_constant_per_trace", "process_name"], ascending=[False, True]))
 
     # Remove processes that are consistent across all traces from the inconsistent_processes list
     inconsistent_processes = [process for process in inconsistent_processes if process not in consistent_processes_per_trace["process_name"].values]
@@ -199,26 +192,58 @@ def identify_process_execution_time_consistency(
 
     consistent_per_resolved_analysis = per_resolved_analysis[per_resolved_analysis["is_constant"] == True]
 
-    print(f"\n## Consistent resolved processes across all traces: {len(consistent_per_resolved_analysis)}")
-    print(per_resolved_analysis.sort_values(by=["is_constant", "process_name","resolved_name"], ascending=[False, True, True]))
-
-    # Identify resolved processes that are consistent within each traces
-    inconsistent_resolved_processes = [resolved_process for resolved_process in per_resolved_analysis["resolved_name"] if resolved_process not in consistent_per_resolved_analysis["resolved_name"].values]
+    # Identify resolved processes that are consistent within each trace
+    inconsistent_resolved_processes = [resolved_process for resolved_process in per_resolved_analysis["resolved_name"]
+                                       if resolved_process not in consistent_per_resolved_analysis["resolved_name"].values]
 
     per_resolved_per_trace_analysis = analyze_process_execution_time_consistency(
         db_manager, tolerance, std_dev_threshold, resolved_process_names=inconsistent_resolved_processes, group_by_resolved_name=True, group_by_trace_name=True, quantile=quantile
     )
 
+    return process_consistency_analysis, per_trace_analysis, per_resolved_analysis, per_resolved_per_trace_analysis
+
+
+def print_process_execution_time_consistency(
+    process_consistency_analysis,
+    per_trace_analysis,
+    per_resolved_analysis,
+    per_resolved_per_trace_analysis
+):
+    """
+    Reproduce the same prints as the original identify_process_execution_time_consistency function.
+
+    :param process_consistency_analysis: DataFrame with process-level consistency analysis.
+    :param per_trace_analysis: DataFrame with per-trace consistency analysis.
+    :param per_resolved_analysis: DataFrame with resolved process-level consistency analysis.
+    :param per_resolved_per_trace_analysis: DataFrame with resolved process per-trace consistency analysis.
+    """
+    # Process-level consistency analysis
+    executed_process_analysis = process_consistency_analysis[~process_consistency_analysis["mean_time"].isna()]
+    consistent_processes = executed_process_analysis[executed_process_analysis["is_constant"] == True]
+    print(f"\n## Consistent processes: {len(consistent_processes)}")
+    print(executed_process_analysis.sort_values(by=["is_constant", "process_name"], ascending=[False, True]))
+
+    # Per-trace consistency analysis
+    consistent_per_trace = per_trace_analysis[per_trace_analysis["is_constant_per_trace"] == True]
+    consistent_processes_count = consistent_per_trace.groupby("process_name").ngroups  # Group by process_name to avoid double-counting
+    print(f"\n## Processes consistent within each individual traces: {consistent_processes_count}")
+    print(per_trace_analysis.sort_values(by=["is_constant_per_trace", "process_name"], ascending=[False, True]))
+
+    # Resolved process-level consistency analysis
+    consistent_per_resolved_analysis = per_resolved_analysis[per_resolved_analysis["is_constant"] == True]
+    print(f"\n## Resolved processes consistent across all traces: {len(consistent_per_resolved_analysis)}")
+    print(per_resolved_analysis.sort_values(by=["is_constant", "process_name", "resolved_name"], ascending=[False, True, True]))
+
+    # Resolved process per-trace consistency analysis
     consistent_per_resolved_per_trace = per_resolved_per_trace_analysis[per_resolved_per_trace_analysis["is_constant"] == True]
-    print(f"\n## Resolved processes consistent within each individual traces: {len(consistent_per_resolved_per_trace)}")    
-    print(consistent_per_resolved_per_trace.sort_values(by=["is_constant", "process_name","resolved_name"], ascending=[False, True, True]))
+    print(f"\n## Resolved processes consistent within each individual traces: {len(consistent_per_resolved_per_trace)}")
+    print(consistent_per_resolved_per_trace.sort_values(by=["is_constant", "process_name", "resolved_name"], ascending=[False, True, True]))
 
     inconsistent_per_resolved_per_trace = per_resolved_per_trace_analysis[per_resolved_per_trace_analysis["is_constant"] == False]
     print(f"\n## Inconsistent processes: {len(inconsistent_per_resolved_per_trace)}")
-    print(inconsistent_per_resolved_per_trace.sort_values(by=["is_constant", "process_name","resolved_name"], ascending=[False, True, True]))
+    print(inconsistent_per_resolved_per_trace.sort_values(by=["is_constant", "process_name", "resolved_name"], ascending=[False, True, True]))
 
-
-    # Print processes that are never executed
+    # Unexecuted processes
     unexecuted_processes = process_consistency_analysis[process_consistency_analysis["mean_time"].isna()]
     print(f"\n## Processes that are never executed: {len(unexecuted_processes)}")
     print(unexecuted_processes.sort_values(by=["process_name"], ascending=[True]))
@@ -239,7 +264,7 @@ if __name__ == "__main__":
         # Add more file pairs as needed
     ]
 
-        # Initialize the database manager with the path to the SQLite database
+    # Initialize the database manager with the path to the SQLite database
     db_manager = NextflowTraceDBManager("nf_trace_db.sqlite")
 
     # Establish a connection to the database
@@ -287,11 +312,18 @@ if __name__ == "__main__":
         group_by_trace_name=True)
     print(results_python)
 
-    identify_process_execution_time_consistency(
+    process_consistency_analysis, per_trace_analysis, per_resolved_analysis, per_resolved_per_trace_analysis = identify_process_execution_time_consistency(
         db_manager,
         tolerance=0.1,
         std_dev_threshold=15000,
         quantile=0.90
+    )
+
+    print_process_execution_time_consistency(
+        process_consistency_analysis,
+        per_trace_analysis,
+        per_resolved_analysis,
+        per_resolved_per_trace_analysis
     )
 
     db_manager.close()
