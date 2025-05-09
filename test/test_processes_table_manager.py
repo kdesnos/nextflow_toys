@@ -24,11 +24,11 @@ class TestProcessesTableManager(unittest.TestCase):
         self.process_manager.addProcess(process)
         self.assertNotEqual(process.pId, 0)  # pId should be updated after insertion
 
-    def test_getProcessByName(self):
+    def test_getProcessByNameAndPath(self):
         process = ProcessEntry(pId=0, name="process1", path="/path/to/process1.nf")
         self.process_manager.addProcess(process)
 
-        retrieved_process = self.process_manager.getProcessByName("process1")
+        retrieved_process = self.process_manager.getProcessByNameAndPath("process1", "/path/to/process1.nf")
         self.assertIsNotNone(retrieved_process)
         self.assertEqual(retrieved_process.name, "process1")
         self.assertEqual(retrieved_process.path, "/path/to/process1.nf")
@@ -46,19 +46,19 @@ class TestProcessesTableManager(unittest.TestCase):
         self.assertEqual(all_processes[0].name, "process1")
         self.assertEqual(all_processes[1].name, "process2")
 
-    def test_removeProcessByName(self):
+    def test_removeProcessByNameAndPath(self):
         process = ProcessEntry(pId=0, name="process1", path="/path/to/process1.nf")
         self.process_manager.addProcess(process)
 
-        result = self.process_manager.removeProcessByName("process1")
+        result = self.process_manager.removeProcessByNameAndPath("process1", "/path/to/process1.nf")
         self.assertTrue(result)
 
         # Ensure the process is removed
-        retrieved_process = self.process_manager.getProcessByName("process1")
+        retrieved_process = self.process_manager.getProcessByNameAndPath("process1", "/path/to/process1.nf")
         self.assertIsNone(retrieved_process)
 
     def test_removeNonExistentProcess(self):
-        result = self.process_manager.removeProcessByName("non_existent_process")
+        result = self.process_manager.removeProcessByNameAndPath("non_existent_process", "/path/to/non_existent_process.nf")
         self.assertFalse(result)
 
     def test_addProcesses(self):

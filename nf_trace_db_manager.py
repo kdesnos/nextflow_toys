@@ -336,12 +336,16 @@ if __name__ == "__main__":
     print("Tables created successfully.")
 
     # Add metadata from an HTML file to the Traces table
-    html_file_path = "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_report.html"
+    html_file_paths = [
+        "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250313_2025-05-08_10_36_28_report.html"]
 
     # Add process definitions
-    log_file = "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_nextflow_logs.log"
+    log_files = [
+        "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250313_2025-05-08_10_36_28_log.log"]
 
-    db_manager.addAllFromFiles(html_file_path, log_file)
+    for html_file_path, log_file in zip(html_file_paths, log_files):
+        print(f"Loading files: {html_file_path} and {log_file}")
+        db_manager.addAllFromFiles(html_file_path, log_file)
     
     # Print database information
     db_manager.printDBInfo()

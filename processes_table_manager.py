@@ -34,18 +34,25 @@ class ProcessesTableManager:
 
         # Add each process to the database
         for _, row in process_definitions.iterrows():
+            # Create a ProcessEntry instance for each process
             process_entry = ProcessEntry(pId=0, name=row['process_name'], path=row['path'])
-            self.addProcess(process_entry)
 
-    def getProcessByName(self, name):
+            # Check if the process already exists in the database
+            # If it does, skip adding it
+            existing_process = self.getProcessByNameAndPath(row["process_name"], row["path"])
+            if not existing_process:
+                self.addProcess(process_entry)
+
+    def getProcessByNameAndPath(self, name, path):
         """
         Retrieve a process entry from the database by its name.
 
         :param name: The name of the process to retrieve.
+        :param path: The path of the process to retrieve.
         :return: A ProcessEntry instance if found, None otherwise.
         """
         cursor = self.connection.cursor()
-        cursor.execute("SELECT pId, name, path FROM Processes WHERE name = ?;", (name,))
+        cursor.execute("SELECT pId, name, path FROM Processes WHERE name = ? AND path = ?;", (name,path))
         row = cursor.fetchone()
 
         if row:
@@ -64,15 +71,16 @@ class ProcessesTableManager:
 
         return [ProcessEntry(pId=row[0], name=row[1], path=row[2]) for row in rows]
 
-    def removeProcessByName(self, name):
+    def removeProcessByNameAndPath(self, name, path):
         """
         Remove a process entry from the database by its name.
 
         :param name: The name of the process to remove.
+        :param path: The path of the process to remove.
         :return: True if the entry existed and was successfully removed, False otherwise.
         """
         cursor = self.connection.cursor()
-        cursor.execute("DELETE FROM Processes WHERE name = ?;", (name,))
+        cursor.execute("DELETE FROM Processes WHERE name = ? AND path = ?;", (name, path))
         self.connection.commit()
 
         # Check if any rows were affected

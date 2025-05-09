@@ -46,15 +46,18 @@ class ResolvedProcessNamesTableManager:
 
         # Add each resolved name to the database
         for _, row in resolved_names.iterrows():
-            # Retrieve the pId for the process name and path
-            process = trace_db_manager.process_manager.getProcessByName(row["process_name"])
-            if process is None:
-                raise Exception(f"Process '{row['process_name']}' not found in Processes table.")
+            # Check if the resolved name already exists in the database
+            existing_entry = self.getResolvedProcessByName(row["resolved_name"])
+            if not existing_entry:
+                # Retrieve the pId for the process name and path
+                process = trace_db_manager.process_manager.getProcessByNameAndPath(row["process_name"], row["path"])
+                if process is None:
+                    raise Exception(f"Process '{row['process_name']}' not found in Processes table.")
 
-            resolved_entry = ResolvedProcessEntry(
-                rId=0, pId=process.pId, name=row["resolved_name"]
-            )
-            self.addResolvedProcessName(resolved_entry)
+                resolved_entry = ResolvedProcessEntry(
+                    rId=0, pId=process.pId, name=row["resolved_name"]
+                )
+                self.addResolvedProcessName(resolved_entry)
 
     def getResolvedProcessByName(self, name):
         """
