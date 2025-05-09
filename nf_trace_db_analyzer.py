@@ -25,20 +25,13 @@ def analyze_process_execution_time_consistency(
     :param group_by_trace_name: If True, include trace names in the grouping.
     :return: A Pandas DataFrame with grouped results, computed statistics, and constancy criteria.
     """
-    # Determine the grouping columns
-    grouping_columns = []
-    if group_by_trace_name:
-        grouping_columns.append("t.name AS trace_name")
-    if group_by_resolved_name:
-        grouping_columns.append("rpn.name AS resolved_name")
-    if not grouping_columns:
-        grouping_columns.append("p.name AS process_name")
-
-    group_column = ", ".join(grouping_columns)
-
     # SQL query to retrieve execution times and grouping columns
     query = f"""
-        SELECT {group_column}, pe.time
+        SELECT t.name AS trace_name,
+            p.name AS process_name,
+            rpn.name AS resolved_name,
+            pe.time,
+            pe.cpu
         FROM Processes p
         LEFT JOIN (
             ResolvedProcessNames rpn
@@ -75,10 +68,7 @@ def analyze_process_execution_time_consistency(
     results = cursor.fetchall()
 
     # Create a Pandas DataFrame from the query results
-    column_names = ["trace_name" if group_by_trace_name else None,
-                    "resolved_name" if group_by_resolved_name else None,
-                    "process_name" if not group_by_trace_name and not group_by_resolved_name else None]
-    column_names = [col for col in column_names if col is not None] + ["time"]
+    column_names = ["trace_name", "process_name", "resolved_name", "time", "cpu"]
     df = pd.DataFrame(results, columns=column_names)
 
     # Remove outliers using the IQR method for each group
@@ -91,13 +81,22 @@ def analyze_process_execution_time_consistency(
         upper_bound = d9 + 1.5 * iqr
         return group[(group >= lower_bound) & (group <= upper_bound)]
 
-    group_cols = column_names[:-1]
+    # Determine the grouping columns
+    group_cols = []
+    if group_by_trace_name:
+        group_cols.append("trace_name")
+    if group_by_resolved_name:
+        group_cols.append("resolved_name")
+        group_cols.append("process_name")  # Include process_name to retain it when grouping by resolved_name
+    else:
+        group_cols.append("process_name")  # Default to grouping by process_name if resolved_name is not activated
+    group_cols.append("cpu")  # Always group by cpu
 
     # Apply outlier removal to the 'time' column only, then merge back with group columns
     df["time"] = df.groupby(group_cols)["time"].transform(remove_outliers)
 
     # Group by the selected columns and compute statistics
-    grouped = df.groupby(column_names[:-1])["time"]
+    grouped = df.groupby(group_cols, dropna=False)["time"]
     stats = grouped.agg(
         mean_time="mean",
         std_dev_time="std",
@@ -111,6 +110,18 @@ def analyze_process_execution_time_consistency(
     stats["is_constant"] = (
         (stats["coefficient_of_variation"] <= tolerance) | (stats["std_dev_time"] <= std_dev_threshold)
     )
+
+    # Ensure all required columns are present in the DataFrame
+    if "trace_name" not in stats:
+        stats["trace_name"] = "*"
+    if "resolved_name" not in stats:
+        stats["resolved_name"] = "*"
+
+    # Reorder the columns to match the specified order
+    stats = stats[
+        ["trace_name", "process_name", "resolved_name", "is_constant", "execution_count",
+         "mean_time", "std_dev_time", "coefficient_of_variation", "cpu"]
+    ]
 
     return stats
 
@@ -153,7 +164,9 @@ if __name__ == "__main__":
         log_file_path = file_pair["log_file"]
         db_manager.addAllFromFiles(html_file_path, log_file_path)
 
+
     # Print database information
+    pd.set_option('display.max_rows', 500)
     db_manager.printDBInfo()
     results_python = analyze_process_execution_time_consistency(db_manager)
     print(results_python)
