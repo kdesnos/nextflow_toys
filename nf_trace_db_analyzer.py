@@ -76,7 +76,7 @@ def analyze_process_execution_time_consistency(
     # Remove outliers using the IQR method for each group
     # with the quantile range determined by the `quantile` parameter
     def remove_outliers(group):
-        if quantile == 1.00:
+        if (quantile == 1.00):
             # Skip outlier removal if quantile is 1.00
             return group
         lower_quantile = (1 - quantile) / 2
@@ -249,6 +249,57 @@ def print_process_execution_time_consistency(
     print(unexecuted_processes.sort_values(by=["process_name"], ascending=[True]))
 
 
+def summarize_consistency_analysis(
+    process_consistency_analysis,
+    per_trace_analysis,
+    per_resolved_analysis,
+    per_resolved_per_trace_analysis
+):
+    """
+    Summarize the consistency analysis into a single DataFrame.
+
+    :param process_consistency_analysis: DataFrame with process-level consistency analysis.
+    :param per_trace_analysis: DataFrame with per-trace consistency analysis.
+    :param per_resolved_analysis: DataFrame with resolved process-level consistency analysis.
+    :param per_resolved_per_trace_analysis: DataFrame with resolved process per-trace consistency analysis.
+    :return: A single DataFrame summarizing the consistency analysis.
+    """
+    # Keep only non-executed processes
+    not_executed = process_consistency_analysis[process_consistency_analysis["mean_time"].isna()].copy()
+    not_executed["consistency_level"] = "Not Executed"
+
+    # Keep only processes that are constant
+    constant = process_consistency_analysis[process_consistency_analysis["is_constant"] == True].copy()
+    constant["consistency_level"] = "Constant"
+
+    # Keep only processes that are consistent per trace
+    per_trace = per_trace_analysis[per_trace_analysis["is_constant_per_trace"] == True].copy()
+    per_trace["consistency_level"] = "Per trace"
+
+    # Keep only resolved processes that are consistent across all traces
+    per_resolved = per_resolved_analysis[per_resolved_analysis["is_constant"] == True].copy()
+    per_resolved["consistency_level"] = "Per resolved"
+
+    # Keep only resolved processes that are consistent within each trace
+    per_resolved_and_trace = per_resolved_per_trace_analysis[per_resolved_per_trace_analysis["is_constant"] == True].copy()
+    per_resolved_and_trace["consistency_level"] = "Per resolved and trace"
+
+    # Combine all the DataFrames
+    summary = pd.concat([not_executed, constant, per_trace, per_resolved, per_resolved_and_trace], ignore_index=True)
+
+    # Drop unnecessary columns to avoid duplication
+    summary = summary[[
+        "trace_name", "process_name", "resolved_name", "consistency_level", 
+        "execution_count", "mean_time", "std_dev_time", "coefficient_of_variation", "cpu"
+    ]]
+
+    # Fill missing values for columns that may not exist in all tables
+    summary["trace_name"] = summary["trace_name"].fillna("*")
+    summary["resolved_name"] = summary["resolved_name"].fillna("*")
+
+    return summary
+
+
 if __name__ == "__main__":
     skip_load_files = True
     # List of HTML and log file paths to load into the database
@@ -325,6 +376,30 @@ if __name__ == "__main__":
         per_resolved_analysis,
         per_resolved_per_trace_analysis
     )
+
+    summary = summarize_consistency_analysis(
+        process_consistency_analysis,
+        per_trace_analysis,
+        per_resolved_analysis,
+        per_resolved_per_trace_analysis
+    )
+
+    # Define the custom order for the consistency_level column
+    consistency_order = [
+        "Constant", "Per trace", "Per resolved", "Per resolved and trace", "Inconstant", "Not Executed"
+    ]
+    summary["consistency_level"] = pd.Categorical(
+        summary["consistency_level"], categories=consistency_order, ordered=True
+    )
+
+    # Sort the summary by the custom order of consistency_level, then by process_name and resolved_name
+    sorted_summary = summary.sort_values(
+        by=["consistency_level", "process_name", "resolved_name"],
+        ascending=[True, True, True]
+    )
+
+    print("\n## Summary of consistency analysis:")
+    print(sorted_summary)
 
     db_manager.close()
     print("Connection closed.")
