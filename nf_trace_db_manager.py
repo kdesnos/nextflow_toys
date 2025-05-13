@@ -98,7 +98,6 @@ class NextflowTraceDBManager:
             cursor.executescript(sql_script)
 
         self.connection.commit()
-        print("Tables created successfully.")
 
     def close(self):
         """
