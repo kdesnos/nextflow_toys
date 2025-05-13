@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS ProcessExecutions (
 	hash TEXT NOT NULL,
 	time Real NOT NULL, -- Execution time in milliseconds
 	cpu TEXT NOT NULL,
+	nbCores INTEGER NOT NULL,
 	
 	UNIQUE (tId, rId, instance, hash)
 );
