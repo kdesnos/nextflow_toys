@@ -284,8 +284,12 @@ def summarize_consistency_analysis(
     per_resolved_and_trace = per_resolved_per_trace_analysis[per_resolved_per_trace_analysis["is_constant"] == True].copy()
     per_resolved_and_trace["consistency_level"] = "Per resolved and trace"
 
+    # Keep only inconsistent processes
+    inconsistent_per_resolved_per_trace = per_resolved_per_trace_analysis[per_resolved_per_trace_analysis["is_constant"] == False].copy()
+    inconsistent_per_resolved_per_trace["consistency_level"] = "Inconstant"
+
     # Combine all the DataFrames
-    summary = pd.concat([not_executed, constant, per_trace, per_resolved, per_resolved_and_trace], ignore_index=True)
+    summary = pd.concat([not_executed, constant, per_trace, per_resolved, per_resolved_and_trace, inconsistent_per_resolved_per_trace], ignore_index=True)
 
     # Drop unnecessary columns to avoid duplication
     summary = summary[[
@@ -305,12 +309,16 @@ if __name__ == "__main__":
     # List of HTML and log file paths to load into the database
     files_to_load = [
         {
-            "html_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_report.html",
-            "log_file": "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-04-22_14_03_39_log.log"
+            "html_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-05-10_10_30_18_report.html",
+            "log_file": "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-05-10_10_30_18_log.log"
         },
         {
             "html_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250313_2025-05-08_10_36_28_report.html",
             "log_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250313_2025-05-08_10_36_28_log.log"
+        },
+        {
+            "html_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250201_2025-05-11_09_56_28_report.html",
+            "log_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250201_2025-05-11_09_56_28_log.log"
         }
         # Add more file pairs as needed
     ]
