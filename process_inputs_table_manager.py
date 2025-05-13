@@ -64,9 +64,9 @@ class ProcessInputsTableManager:
                     if (existing_entry is not None):
                         if (existing_entry != input_entry):
                             raise Exception(
-                                f"Process with pId:{
-                                    resolved_process_entry.pId} resolved as {
-                                    resolved_process_entry.name} is aliased multiple times with different input arguments.")
+                                f"Process with pId:{resolved_process_entry.pId} \
+                                    resolved as {resolved_process_entry.name} \
+                                    is aliased multiple times with different input arguments.")
                     else:
                         self.addProcessInput(input_entry)
 
