@@ -417,7 +417,7 @@ if __name__ == "__main__":
         db_manager,
         tolerance=0.1,
         std_dev_threshold=15000,
-        quantile=0.90
+        quantile=0.80
     )
 
     print_process_execution_time_consistency(
@@ -450,6 +450,11 @@ if __name__ == "__main__":
 
     print("\n## Summary of consistency analysis:")
     print(sorted_summary)
+
+    # For processes that are categorized as "Per trace", identify the numerical parameters
+    # that are variable across the specified traces
+    trace_names = per_trace_analysis[per_trace_analysis['is_constant'] == True]["trace_name"].unique()
+    identify_variable_pipeline_numerical_parameters(db_manager, trace_names)
 
     db_manager.close()
     print("Connection closed.")
