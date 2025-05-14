@@ -336,15 +336,15 @@ if __name__ == "__main__":
 
     # Add metadata from an HTML file to the Traces table
     html_file_paths = [
-        "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-05-10_10_30_18_report.html",
-        "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250201_2025-05-11_09_56_28_report.html",
-        "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250313_2025-05-08_10_36_28_report.html"]
+        "./dat/250510_210912_CELEBI/karol_210912_ult_2025-05-10_10_30_18_report.html",
+        "./dat/250511_250201_CELEBI/karol_250201_2025-05-11_09_56_28_report.html",
+        "./dat/250508_250313_CELEBI/karol_250313_2025-05-08_10_36_28_report.html"]
 
     # Add process definitions
     log_files = [
-        "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-05-10_10_30_18_log.log",
-        "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250201_2025-05-11_09_56_28_log.log",
-        "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250313_2025-05-08_10_36_28_log.log"]
+        "./dat/250510_210912_CELEBI/karol_210912_ult_2025-05-10_10_30_18_log.log",
+        "./dat/250511_250201_CELEBI/karol_250201_2025-05-11_09_56_28_log.log",
+        "./dat/250508_250313_CELEBI/karol_250313_2025-05-08_10_36_28_log.log"]
 
     for html_file_path, log_file in zip(html_file_paths, log_files):
         print(f"Loading files: {html_file_path} and {log_file}")

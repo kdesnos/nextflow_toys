@@ -289,11 +289,12 @@ def summarize_consistency_analysis(
     inconsistent_per_resolved_per_trace["consistency_level"] = "Inconstant"
 
     # Combine all the DataFrames
-    summary = pd.concat([not_executed, constant, per_trace, per_resolved, per_resolved_and_trace, inconsistent_per_resolved_per_trace], ignore_index=True)
+    summary = pd.concat([not_executed, constant, per_trace, per_resolved, per_resolved_and_trace,
+                        inconsistent_per_resolved_per_trace], ignore_index=True)
 
     # Drop unnecessary columns to avoid duplication
     summary = summary[[
-        "trace_name", "process_name", "resolved_name", "consistency_level", 
+        "trace_name", "process_name", "resolved_name", "consistency_level",
         "execution_count", "mean_time", "std_dev_time", "coefficient_of_variation", "cpu"
     ]]
 
@@ -304,21 +305,62 @@ def summarize_consistency_analysis(
     return summary
 
 
+def identify_variable_pipeline_numerical_parameters(db_manager, trace_names):
+    """
+    Finds the parameters in the PipelineParams table that are numerical and have
+    different values across the specified traces.
+
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param trace_names: List of trace names to check for variable parameters.
+    :return: A list of names of parameters that are numerical and have different values across the specified traces.
+    """
+    # SQL query to get the list of pipeline parameters used for the specified traces
+    trace_filter = ", ".join(f'"{name}"' for name in trace_names)
+    query = """
+        SELECT pp.name, t.name, ppv.value, pp.type
+        FROM PipelineParams pp
+        JOIN (
+        	SELECT ppv.paramId FROM PipelineParamValues ppv 
+        	JOIN Traces t ON ppv.tId = t.tId 
+        	JOIN PipelineParams pp ON pp.paramId = ppv.paramId
+        	WHERE pp.type IN ('Integer', 'Real', 'Boolean', 'List[Real]', 'List[Integer]', 'List[Boolean]')
+        	AND t.name in ({})
+        	GROUP BY ppv.paramId
+        	HAVING COUNT(DISTINCT ppv.value) > 1   
+        ) AS J ON pp.paramId = J.paramId
+        JOIN PipelineParamValues ppv ON J.paramId = ppv.paramId 
+        JOIN Traces t ON t.tId = ppv.tId
+        WHERE t.name in ({});
+        """.format(trace_filter, trace_filter)
+    
+    # Execute the query and fetch the results
+    cursor = db_manager.connection.cursor() 
+    cursor.execute(query)
+    results = cursor.fetchall()
+
+    #Create a DataFrame from the query results
+    column_names = ["param_name", "trace_name", "value", "type"]   
+    df = pd.DataFrame(results, columns=column_names)
+    df = df.sort_values(by=["param_name", "trace_name", "value"], ascending=[True, True, True])
+
+    print(df)   
+
+
 if __name__ == "__main__":
     skip_load_files = True
     # List of HTML and log file paths to load into the database
     files_to_load = [
         {
-            "html_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-05-10_10_30_18_report.html",
-            "log_file": "C:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_210912_ult_2025-05-10_10_30_18_log.log"
+            "html_file": "./dat/250510_210912_CELEBI/karol_210912_ult_2025-05-10_10_30_18_report.html",
+            "log_file": "./dat/250510_210912_CELEBI/karol_210912_ult_2025-05-10_10_30_18_log.log"
         },
         {
-            "html_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250313_2025-05-08_10_36_28_report.html",
-            "log_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250313_2025-05-08_10_36_28_log.log"
+            "html_file": "./dat/250508_250313_CELEBI/karol_250313_2025-05-08_10_36_28_report.html",
+            "log_file": "./dat/250508_250313_CELEBI/karol_250313_2025-05-08_10_36_28_log.log"
         },
         {
-            "html_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250201_2025-05-11_09_56_28_report.html",
-            "log_file": "c:\\Users\\Karol\\Desktop\\Sandbox\\pipelines\\karol_250201_2025-05-11_09_56_28_log.log"
+            "html_file": "./dat/250511_250201_CELEBI/karol_250201_2025-05-11_09_56_28_report.html",
+            "log_file": "./dat/250511_250201_CELEBI/karol_250201_2025-05-11_09_56_28_log.log"
         }
         # Add more file pairs as needed
     ]
