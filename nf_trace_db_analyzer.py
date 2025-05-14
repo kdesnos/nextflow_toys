@@ -1,5 +1,6 @@
 import pandas as pd
 from nf_trace_db_manager import NextflowTraceDBManager
+from scipy.stats import pearsonr
 
 
 def analyze_process_execution_time_consistency(
@@ -305,45 +306,124 @@ def summarize_consistency_analysis(
     return summary
 
 
-def identify_variable_pipeline_numerical_parameters(db_manager, trace_names):
+def identify_variable_pipeline_numerical_parameters(db_manager):
     """
     Finds the parameters in the PipelineParams table that are numerical and have
-    different values across the specified traces.
+    different values across all traces.
 
     :param db_manager: An instance of NextflowTraceDBManager.
-    :param trace_names: List of trace names to check for variable parameters.
-    :return: A list of names of parameters that are numerical and have different values across the specified traces.
+    :return: A DataFrame with the parameters that are variable across the specified traces.
     """
     # SQL query to get the list of pipeline parameters used for the specified traces
-    trace_filter = ", ".join(f'"{name}"' for name in trace_names)
     query = """
         SELECT pp.name, t.name, ppv.value, pp.type
         FROM PipelineParams pp
         JOIN (
-        	SELECT ppv.paramId FROM PipelineParamValues ppv 
-        	JOIN Traces t ON ppv.tId = t.tId 
+        	SELECT ppv.paramId FROM PipelineParamValues ppv
+        	JOIN Traces t ON ppv.tId = t.tId
         	JOIN PipelineParams pp ON pp.paramId = ppv.paramId
-        	WHERE pp.type IN ('Integer', 'Real', 'Boolean', 'List[Real]', 'List[Integer]', 'List[Boolean]')
-        	AND t.name in ({})
+        	WHERE pp.type IN ('Integer', 'Real', 'Boolean') -- For now, ignore 'List[Real]', 'List[Integer]', 'List[Boolean]'
         	GROUP BY ppv.paramId
-        	HAVING COUNT(DISTINCT ppv.value) > 1   
+        	HAVING COUNT(DISTINCT ppv.value) > 1
         ) AS J ON pp.paramId = J.paramId
-        JOIN PipelineParamValues ppv ON J.paramId = ppv.paramId 
-        JOIN Traces t ON t.tId = ppv.tId
-        WHERE t.name in ({});
-        """.format(trace_filter, trace_filter)
-    
+        JOIN PipelineParamValues ppv ON J.paramId = ppv.paramId
+        JOIN Traces t ON t.tId = ppv.tId;
+        """
+
     # Execute the query and fetch the results
-    cursor = db_manager.connection.cursor() 
+    cursor = db_manager.connection.cursor()
     cursor.execute(query)
     results = cursor.fetchall()
 
-    #Create a DataFrame from the query results
-    column_names = ["param_name", "trace_name", "value", "type"]   
+    # Create a DataFrame from the query results
+    column_names = ["param_name", "trace_name", "value", "type"]
     df = pd.DataFrame(results, columns=column_names)
-    df = df.sort_values(by=["param_name", "trace_name", "value"], ascending=[True, True, True])
 
-    print(df)   
+    # Return the DataFrame with variable parameters
+    return df
+
+
+def analyze_process_execution_correlation(db_manager, process_name):
+    """
+    Analyze the correlation between the execution times of a given process and varying pipeline parameters.
+
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param process_name: The name of the process to analyze.
+    :return: A Pandas DataFrame with parameter names, correlation coefficients, and p-values, sorted by correlation.
+    """
+    # Step 1: Retrieve varying pipeline parameters and their values across traces
+    varying_params = identify_variable_pipeline_numerical_parameters(db_manager)
+    if varying_params.empty:
+        raise Exception("No varying pipeline parameters found.")
+
+    # Step 2: Retrieve all execution times for the given process
+    query = """
+        SELECT pe.time, t.name AS trace_name
+        FROM ProcessExecutions pe
+        JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
+        JOIN Processes p ON rpn.pId = p.pId
+        JOIN Traces t ON pe.tId = t.tId
+        WHERE p.name = ?;
+    """
+    cursor = db_manager.connection.cursor()
+    cursor.execute(query, (process_name,))
+    execution_data = cursor.fetchall()
+
+    if not execution_data:
+        raise Exception(f"No execution times found for process '{process_name}'.")
+
+    # Convert execution data to a DataFrame
+    execution_df = pd.DataFrame(execution_data, columns=["execution_time", "trace_name"])
+
+    # Step 3: Pivot the varying_params DataFrame to have one row per trace and columns for each parameter
+    param_df = varying_params.pivot(index="trace_name", columns="param_name", values="value").reset_index()
+
+    # Step 4: Merge execution times with varying parameter values
+    merged_df = execution_df.merge(param_df, on="trace_name", how="inner")
+
+    # Step 5: Convert parameter values to numerical types based on the "type" column
+    for param in param_df.columns:
+        if param == "trace_name":
+            continue
+
+        # Check the type of the parameter and convert accordingly
+        param_type = varying_params[varying_params["param_name"] == param]["type"].iloc[0]
+        if param_type == "Boolean":
+            # Convert Boolean values to 0 (False) and 1 (True)
+            merged_df[param] = merged_df[param].map({"True": 1, "False": 0})
+        elif param_type == "Integer":
+            # Convert to integers
+            merged_df[param] = merged_df[param].astype(int)
+        elif param_type == "Real":
+            # Convert to floats
+            merged_df[param] = merged_df[param].astype(float)
+        else:
+            raise Exception(f"Unsupported parameter type '{param_type}' for parameter '{param}'.")
+
+    # Step 6: Analyze correlation between execution times and each parameter
+    correlations = []
+    for param in param_df.columns:
+        if param == "trace_name":
+            continue
+
+        # Calculate Pearson correlation coefficient and p-value
+        correlation, p_value = pearsonr(merged_df["execution_time"], merged_df[param])
+        correlations.append({
+            "process_name": process_name,
+            "parameter": param,
+            "correlation": correlation,
+            "abs_correlation": abs(correlation),
+            "p_value": p_value,
+            "type": varying_params[varying_params["param_name"] == param]["type"].iloc[0]
+        })
+
+    # Convert the correlation results to a Pandas DataFrame
+    correlation_df = pd.DataFrame(correlations)
+
+    # Sort the DataFrame by correlation in descending order
+    correlation_df = correlation_df.sort_values(by="abs_correlation", ascending=False)
+
+    return correlation_df
 
 
 if __name__ == "__main__":
@@ -361,6 +441,10 @@ if __name__ == "__main__":
         {
             "html_file": "./dat/250511_250201_CELEBI/karol_250201_2025-05-11_09_56_28_report.html",
             "log_file": "./dat/250511_250201_CELEBI/karol_250201_2025-05-11_09_56_28_log.log"
+        },
+        {
+            "html_file": "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_report.html",
+            "log_file": "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_log.log"
         }
         # Add more file pairs as needed
     ]
@@ -453,8 +537,23 @@ if __name__ == "__main__":
 
     # For processes that are categorized as "Per trace", identify the numerical parameters
     # that are variable across the specified traces
-    trace_names = per_trace_analysis[per_trace_analysis['is_constant'] == True]["trace_name"].unique()
-    identify_variable_pipeline_numerical_parameters(db_manager, trace_names)
+    variable_pipeline_params = identify_variable_pipeline_numerical_parameters(db_manager)
+
+    print("\n## Variable pipeline parameters across traces:")
+    variable_pipeline_params = variable_pipeline_params.sort_values(by=["param_name", "trace_name", "value"], ascending=[True, True, True])
+    print(variable_pipeline_params)
+
+    # For processes that are categorized as "Per trace", analyze the correlation
+    # between the execution times and the varying pipeline parameters
+    per_trace_analysis = per_trace_analysis[per_trace_analysis["is_constant_per_trace"] == True]["process_name"].unique()
+    correlations = {}
+    for process_name in per_trace_analysis:
+        correlations[process_name] = analyze_process_execution_correlation(db_manager, process_name)
+
+    # Print the correlation results
+    for process_name, correlation_df in correlations.items():
+        print(f"\n## Correlation analysis for process '{process_name}':")
+        print(correlation_df)
 
     db_manager.close()
     print("Connection closed.")

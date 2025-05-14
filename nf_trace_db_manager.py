@@ -338,18 +338,20 @@ if __name__ == "__main__":
     html_file_paths = [
         "./dat/250510_210912_CELEBI/karol_210912_ult_2025-05-10_10_30_18_report.html",
         "./dat/250511_250201_CELEBI/karol_250201_2025-05-11_09_56_28_report.html",
-        "./dat/250508_250313_CELEBI/karol_250313_2025-05-08_10_36_28_report.html"]
+        "./dat/250508_250313_CELEBI/karol_250313_2025-05-08_10_36_28_report.html",
+        "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_report.html",]
 
     # Add process definitions
     log_files = [
         "./dat/250510_210912_CELEBI/karol_210912_ult_2025-05-10_10_30_18_log.log",
         "./dat/250511_250201_CELEBI/karol_250201_2025-05-11_09_56_28_log.log",
-        "./dat/250508_250313_CELEBI/karol_250313_2025-05-08_10_36_28_log.log"]
+        "./dat/250508_250313_CELEBI/karol_250313_2025-05-08_10_36_28_log.log",
+        "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_log.log",]
 
     for html_file_path, log_file in zip(html_file_paths, log_files):
         print(f"Loading files: {html_file_path} and {log_file}")
         db_manager.addAllFromFiles(html_file_path, log_file)
-    
+
     # Print database information
     db_manager.printDBInfo()
 
