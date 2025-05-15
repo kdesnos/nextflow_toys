@@ -1,6 +1,9 @@
 import pandas as pd
 from nf_trace_db_manager import NextflowTraceDBManager
 from scipy.stats import pearsonr
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+from scipy.stats import f_oneway
 
 
 def analyze_process_execution_time_consistency(
@@ -343,13 +346,14 @@ def identify_variable_pipeline_numerical_parameters(db_manager):
     return df
 
 
-def analyze_process_execution_correlation(db_manager, process_name):
+def analyze_process_execution_correlation(db_manager, process_name, skip_warnings=False):
     """
     Analyze the correlation between the execution times of a given process and varying pipeline parameters.
 
     :param db_manager: An instance of NextflowTraceDBManager.
     :param process_name: The name of the process to analyze.
-    :return: A Pandas DataFrame with parameter names, correlation coefficients, and p-values, sorted by correlation.
+    :param skip_warnings: If True, suppress warnings about low data points or unique parameter values.
+    :return: A Pandas DataFrame with parameter names, correlation coefficients, p-values, and R² values, sorted by correlation.
     """
     # Step 1: Retrieve varying pipeline parameters and their values across traces
     varying_params = identify_variable_pipeline_numerical_parameters(db_manager)
@@ -402,9 +406,20 @@ def analyze_process_execution_correlation(db_manager, process_name):
 
     # Step 6: Analyze correlation between execution times and each parameter
     correlations = []
+    num_data_points = len(merged_df)
+
+    # Warning if the number of data points is too small
+    if not skip_warnings and num_data_points < 30:
+        print(f"Warning: Low number of data points ({num_data_points}). Correlation results may not be reliable.")
+
     for param in param_df.columns:
         if param == "trace_name":
             continue
+
+        # Check the number of unique values for the parameter
+        num_unique_values = merged_df[param].nunique()
+        if not skip_warnings and num_unique_values < 5:
+            print(f"Warning: Parameter '{param}' has only {num_unique_values} unique values. Correlation may not be reliable.")
 
         # Calculate Pearson correlation coefficient and p-value
         correlation, p_value = pearsonr(merged_df["execution_time"], merged_df[param])
@@ -414,16 +429,142 @@ def analyze_process_execution_correlation(db_manager, process_name):
             "correlation": correlation,
             "abs_correlation": abs(correlation),
             "p_value": p_value,
+            "r_squared": correlation ** 2,  # Coefficient of determination
             "type": varying_params[varying_params["param_name"] == param]["type"].iloc[0]
         })
 
     # Convert the correlation results to a Pandas DataFrame
     correlation_df = pd.DataFrame(correlations)
 
-    # Sort the DataFrame by correlation in descending order
+    # Sort the DataFrame by absolute correlation in descending order
     correlation_df = correlation_df.sort_values(by="abs_correlation", ascending=False)
 
     return correlation_df
+
+def two_way_anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tolerance=0.1):
+    """
+    For each process in the Processes table, performs a two-way ANOVA on execution times,
+    with factors: run (trace_name) and resolved process name (resolved_name).
+    Falls back to one-way ANOVA or standard deviation check if only one factor is possible.
+    Returns a DataFrame summarizing the results for each process.
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param effect_threshold_ms: The threshold in milliseconds for considering an effect significant.
+    :param tolerance: The threshold for coefficient of variation for the fallback test (default: 0.1).
+    :return: A Pandas DataFrame with results for each process.
+    """
+    processes = db_manager.process_manager.getAllProcesses()
+    results = []
+
+    for process in processes:
+        query = """
+            SELECT pe.time, t.name as trace_name, rpn.name as resolved_name
+            FROM ProcessExecutions pe
+            JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
+            JOIN Traces t ON pe.tId = t.tId
+            WHERE rpn.pId = ?
+        """
+        cursor = db_manager.connection.cursor()
+        cursor.execute(query, (process.pId,))
+        rows = cursor.fetchall()
+        if not rows:
+            continue
+
+        df = pd.DataFrame(rows, columns=["time", "trace_name", "resolved_name"])
+        execs_per_trace = df.groupby("trace_name")["time"].count()
+        execs_per_resolved = df.groupby("resolved_name")["time"].count()
+        enough_per_trace = (execs_per_trace > 1).any()
+        enough_per_resolved = (execs_per_resolved > 1).any()
+        n_traces = df["trace_name"].nunique()
+        n_resolved = df["resolved_name"].nunique()
+
+        # Compute effect sizes
+        trace_effect = df.groupby("trace_name")["time"].mean().max() - df.groupby("trace_name")["time"].mean().min() if n_traces > 1 else None
+        resolved_effect = df.groupby("resolved_name")["time"].mean().max() - df.groupby("resolved_name")["time"].mean().min() if n_resolved > 1 else None
+
+        if enough_per_trace and enough_per_resolved and n_traces > 1 and n_resolved > 1:
+            # Two-way ANOVA
+            model = smf.ols('time ~ C(trace_name) + C(resolved_name)', data=df).fit()
+            anova_table = sm.stats.anova_lm(model, typ=2)
+            results.append({
+                "process_name": process.name,
+                "test": "anova2w",
+                "trace_F": anova_table.loc["C(trace_name)", "F"],
+                "trace_p_or_cv": anova_table.loc["C(trace_name)", "PR(>F)"],
+                "trace_effect_ms": trace_effect,
+                "trace_significant": (
+                    anova_table.loc["C(trace_name)", "PR(>F)"] < 0.05 and trace_effect is not None and trace_effect >= effect_threshold_ms
+                ),
+                "resolved_F": anova_table.loc["C(resolved_name)", "F"],
+                "resolved_p": anova_table.loc["C(resolved_name)", "PR(>F)"],
+                "resolved_effect_ms": resolved_effect,
+                "resolved_significant": (
+                    anova_table.loc["C(resolved_name)", "PR(>F)"] < 0.05 and resolved_effect is not None and resolved_effect >= effect_threshold_ms
+                ),
+                "n": len(df)
+            })
+        elif enough_per_trace and n_traces > 1:
+            # One-way ANOVA on trace_name
+            groups = [g["time"].values for _, g in df.groupby("trace_name") if len(g) > 1]
+            if len(groups) > 1:
+                F, p = f_oneway(*groups)
+            else:
+                F, p = None, None
+            results.append({
+                "process_name": process.name,
+                "test": "anova1w",
+                "trace_F": F,
+                "trace_p_or_cv": p,
+                "trace_effect_ms": trace_effect,
+                "trace_significant": (
+                    p is not None and p < 0.05 and trace_effect is not None and trace_effect >= effect_threshold_ms
+                ),
+                "resolved_F": None,
+                "resolved_p": None,
+                "resolved_effect_ms": None,
+                "resolved_significant": None,
+                "n": len(df)
+            })
+        elif enough_per_resolved and n_resolved > 1:
+            # One-way ANOVA on resolved_name
+            groups = [g["time"].values for _, g in df.groupby("resolved_name") if len(g) > 1]
+            if len(groups) > 1:
+                F, p = f_oneway(*groups)
+            else:
+                F, p = None, None
+            results.append({
+                "process_name": process.name,
+                "test": "anova1w",
+                "trace_F": None,
+                "trace_p_or_cv": None,
+                "trace_effect_ms": None,
+                "trace_significant": None,
+                "resolved_F": F,
+                "resolved_p": p,
+                "resolved_effect_ms": resolved_effect,
+                "resolved_significant": (
+                    p is not None and p < 0.05 and resolved_effect is not None and resolved_effect >= effect_threshold_ms
+                ),
+                "n": len(df)
+            })
+        else:
+            # Not enough data for ANOVA, use standard deviation
+            std_dev = df["time"].std() 
+            coeff_of_variation = std_dev / df["time"].mean() 
+            results.append({
+                "process_name": process.name,
+                "test": "CV",
+                "trace_F": None,
+                "trace_p_or_cv": coeff_of_variation,
+                "trace_effect_ms": std_dev,
+                "trace_significant": coeff_of_variation > tolerance and std_dev > effect_threshold_ms,
+                "resolved_F": None,
+                "resolved_p": None,
+                "resolved_effect_ms": None,
+                "resolved_significant": None,
+                "n": len(df)
+            })
+
+    return pd.DataFrame(results)
 
 
 if __name__ == "__main__":
@@ -554,6 +695,11 @@ if __name__ == "__main__":
     for process_name, correlation_df in correlations.items():
         print(f"\n## Correlation analysis for process '{process_name}':")
         print(correlation_df)
+
+    anova_results = two_way_anova_on_process_execution_times(db_manager)
+    print("\n## Two-way ANOVA results on process execution times:")
+    anova_results = anova_results.sort_values(by=["process_name"], ascending=[True])
+    print(anova_results)
 
     db_manager.close()
     print("Connection closed.")
