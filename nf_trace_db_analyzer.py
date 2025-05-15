@@ -441,7 +441,7 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
 
     return correlation_df
 
-def two_way_anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tolerance=0.1):
+def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tolerance=0.1):
     """
     For each process in the Processes table, performs a two-way ANOVA on execution times,
     with factors: run (trace_name) and resolved process name (resolved_name).
@@ -615,89 +615,16 @@ if __name__ == "__main__":
             log_file_path = file_pair["log_file"]
             db_manager.addAllFromFiles(html_file_path, log_file_path)
 
+    # Setup pandas display params
+    pd.set_option("display.max_columns", None)
+    pd.set_option("display.width", 1000)
+    pd.set_option("display.max_rows", None)
+    
     # Print database information
-    pd.set_option('display.max_rows', 500)
     db_manager.printDBInfo()
-    results_python = analyze_process_execution_time_consistency(db_manager)
-    print(results_python)
 
-    results_python = analyze_process_execution_time_consistency(db_manager, process_names=["do_correlation"], group_by_resolved_name=True)
-    print(results_python)
-
-    results_python = analyze_process_execution_time_consistency(
-        db_manager,
-        process_names=["do_correlation"],
-        group_by_resolved_name=False,
-        group_by_trace_name=True)
-    print(results_python)
-
-    results_python = analyze_process_execution_time_consistency(
-        db_manager,
-        process_names=["do_correlation"],
-        group_by_resolved_name=True,
-        group_by_trace_name=True)
-    print(results_python)
-
-    process_consistency_analysis, per_trace_analysis, per_resolved_analysis, per_resolved_per_trace_analysis = identify_process_execution_time_consistency(
-        db_manager,
-        tolerance=0.1,
-        std_dev_threshold=15000,
-        quantile=0.80
-    )
-
-    print_process_execution_time_consistency(
-        process_consistency_analysis,
-        per_trace_analysis,
-        per_resolved_analysis,
-        per_resolved_per_trace_analysis
-    )
-
-    summary = summarize_consistency_analysis(
-        process_consistency_analysis,
-        per_trace_analysis,
-        per_resolved_analysis,
-        per_resolved_per_trace_analysis
-    )
-
-    # Define the custom order for the consistency_level column
-    consistency_order = [
-        "Constant", "Per trace", "Per resolved", "Per resolved and trace", "Inconstant", "Not Executed"
-    ]
-    summary["consistency_level"] = pd.Categorical(
-        summary["consistency_level"], categories=consistency_order, ordered=True
-    )
-
-    # Sort the summary by the custom order of consistency_level, then by process_name and resolved_name
-    sorted_summary = summary.sort_values(
-        by=["consistency_level", "process_name", "resolved_name"],
-        ascending=[True, True, True]
-    )
-
-    print("\n## Summary of consistency analysis:")
-    print(sorted_summary)
-
-    # For processes that are categorized as "Per trace", identify the numerical parameters
-    # that are variable across the specified traces
-    variable_pipeline_params = identify_variable_pipeline_numerical_parameters(db_manager)
-
-    print("\n## Variable pipeline parameters across traces:")
-    variable_pipeline_params = variable_pipeline_params.sort_values(by=["param_name", "trace_name", "value"], ascending=[True, True, True])
-    print(variable_pipeline_params)
-
-    # For processes that are categorized as "Per trace", analyze the correlation
-    # between the execution times and the varying pipeline parameters
-    per_trace_analysis = per_trace_analysis[per_trace_analysis["is_constant_per_trace"] == True]["process_name"].unique()
-    correlations = {}
-    for process_name in per_trace_analysis:
-        correlations[process_name] = analyze_process_execution_correlation(db_manager, process_name)
-
-    # Print the correlation results
-    for process_name, correlation_df in correlations.items():
-        print(f"\n## Correlation analysis for process '{process_name}':")
-        print(correlation_df)
-
-    anova_results = two_way_anova_on_process_execution_times(db_manager)
-    print("\n## Two-way ANOVA results on process execution times:")
+    anova_results = anova_on_process_execution_times(db_manager)
+    print("\n## ANOVA results on process execution times:")
     anova_results = anova_results.sort_values(by=["process_name"], ascending=[True])
     print(anova_results)
 
