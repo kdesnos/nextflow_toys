@@ -1,7 +1,7 @@
 import unittest
 
 import pandas as pd
-from nf_trace_db_analyzer import analyze_process_execution_correlation, analyze_process_execution_time_consistency, anova_on_process_execution_times, identify_process_execution_time_consistency, identify_variable_pipeline_numerical_parameters, print_process_execution_time_consistency, summarize_consistency_analysis
+from nf_trace_db_analyzer import analyze_process_execution_correlation, analyze_process_execution_time_consistency, anova_on_process_execution_times, get_execution_times_distribution_charasteristics, identify_process_execution_time_consistency, identify_variable_pipeline_numerical_parameters, print_process_execution_time_consistency, summarize_consistency_analysis
 from nf_trace_db_manager import NextflowTraceDBManager
 
 
@@ -172,6 +172,11 @@ class TestNextflowTraceDBAnalyzer(unittest.TestCase):
         self.assertEqual(anova_results.shape[0], 19)
         self.assertEqual(anova_results.shape[1], 11)
 
+    def test_get_execution_times_distribution_charasteristics(self):
+        stats = get_execution_times_distribution_charasteristics(self.db_manager, "fcal1:corr_fcal:difx_to_fits", is_resolved_name=True)
+        print(stats)
+        self.assertEqual(stats["mean_time"][0], 112115.75)
+        self.assertEqual(stats["std_dev_time"][0], 10778.339815922493)
 
 if __name__ == "__main__":
     unittest.main()

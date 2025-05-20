@@ -62,6 +62,19 @@ class TestResolvedProcessNamesTableManager(unittest.TestCase):
         self.assertEqual(all_resolved[0].name, "resolved1")
         self.assertEqual(all_resolved[1].name, "resolved2")
 
+    def test_getResolvedProcessesOfProcess(self):
+        resolved_entries = [
+            ResolvedProcessEntry(rId=0, pId=self.process.pId, name="resolved1"),
+            ResolvedProcessEntry(rId=0, pId=self.process.pId, name="resolved2"),
+        ]
+        for entry in resolved_entries:
+            self.resolved_manager.addResolvedProcessName(entry)
+
+        resolved_processes = self.resolved_manager.getResolvedProcessesOfProcess(self.process.name)
+        self.assertEqual(len(resolved_processes), 2)
+        self.assertEqual(resolved_processes[0].name, "resolved1")
+        self.assertEqual(resolved_processes[1].name, "resolved2")
+
     def test_removeResolvedProcessByName(self):
         resolved_entry = ResolvedProcessEntry(rId=0, pId=self.process.pId, name="resolved1")
         self.resolved_manager.addResolvedProcessName(resolved_entry)

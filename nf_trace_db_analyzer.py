@@ -4,6 +4,9 @@ from scipy.stats import pearsonr
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from scipy.stats import f_oneway
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+import numpy as np
 
 
 def analyze_process_execution_time_consistency(
@@ -346,6 +349,49 @@ def identify_variable_pipeline_numerical_parameters(db_manager):
     return df
 
 
+def get_execution_times_distribution_charasteristics(db_manager, process_name, is_resolved_name=False):
+    """
+    Get the distribution characteristics of execution times for a given process.
+
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param process_name: The name of the process or resolved process to analyze.
+    :param is_resolved_name: If True, treat process_name as a resolved process name.
+    :return: A Pandas DataFrame with distribution characteristics.
+    """
+    # SQL query to get the execution times for the specified process
+    query = f"""
+        SELECT pe.time, t.name AS trace_name
+        FROM ProcessExecutions pe
+        JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
+        JOIN Processes p ON rpn.pId = p.pId
+        JOIN Traces t ON pe.tId = t.tId
+        WHERE {"p" if not is_resolved_name else "rpn"}.name = ?;
+    """
+    cursor = db_manager.connection.cursor()
+    cursor.execute(query, (process_name,))
+    execution_data = cursor.fetchall()
+
+    # Convert execution data to a DataFrame
+    execution_df = pd.DataFrame(execution_data, columns=["execution_time", "trace_name"])
+
+    # Calculate distribution characteristics
+    mean_time = execution_df["execution_time"].mean()
+    std_dev_time = execution_df["execution_time"].std(ddof=0)
+    min_time = execution_df["execution_time"].min()
+    max_time = execution_df["execution_time"].max()
+
+    # Create a summary DataFrame
+    summary_df = pd.DataFrame({
+        "process_name": [process_name],
+        "mean_time": [mean_time],
+        "std_dev_time": [std_dev_time],
+        "min_time": [min_time],
+        "max_time": [max_time]
+    })
+
+    return summary_df
+
+
 def analyze_process_execution_correlation(db_manager, process_name, skip_warnings=False):
     """
     Analyze the correlation between the execution times of a given process and varying pipeline parameters.
@@ -441,6 +487,150 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
 
     return correlation_df
 
+
+def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_threshold=15000, is_resolved_name=False):
+    """
+    Extract an expression for predicting execution time as a function of the best parameters.
+
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param process_name: The name of the process to analyze.
+    :param top_n: Maximum number of top parameters to use for the regression model.
+    :param rmse_threshold: RMSE threshold for stopping the iterative parameter addition.
+    :param is_resolved_name: If True, treat process_name as a resolved process name.
+    :return: A dictionary containing the regression model, the expression, and evaluation metrics.
+    """
+    # Step 1: Retrieve varying pipeline parameters
+    varying_params = identify_variable_pipeline_numerical_parameters(db_manager)
+    if varying_params.empty:
+        raise Exception("No varying pipeline parameters found.")
+
+    # Step 2: Retrieve execution times for the given process
+    query = f"""
+        SELECT pe.time AS execution_time, t.name AS trace_name
+        FROM ProcessExecutions pe
+        JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
+        JOIN Processes p ON rpn.pId = p.pId
+        JOIN Traces t ON pe.tId = t.tId
+        WHERE {"p" if not is_resolved_name else "rpn"}.name = ?;
+    """
+    cursor = db_manager.connection.cursor()
+    cursor.execute(query, (process_name,))
+    execution_data = cursor.fetchall()
+
+    if not execution_data:
+        raise Exception(f"No execution times found for process '{process_name}'.")
+
+    # Convert execution data to a DataFrame
+    execution_df = pd.DataFrame(execution_data, columns=["execution_time", "trace_name"])
+
+    # Step 3: Pivot the varying_params DataFrame to have one row per trace and columns for each parameter
+    param_df = varying_params.pivot(index="trace_name", columns="param_name", values="value").reset_index()
+
+    # Step 4: Merge execution times with varying parameter values
+    merged_df = execution_df.merge(param_df, on="trace_name", how="inner")
+
+    # Step 5: Convert parameter values to numerical types based on the "type" column
+    for param in param_df.columns:
+        if param == "trace_name":
+            continue
+
+        # Check the type of the parameter and convert accordingly
+        param_type = varying_params[varying_params["param_name"] == param]["type"].iloc[0]
+        if param_type == "Boolean":
+            # Convert Boolean values to 0 (False) and 1 (True)
+            merged_df[param] = merged_df[param].map({"True": 1, "False": 0})
+        elif param_type == "Integer":
+            # Convert to integers
+            merged_df[param] = merged_df[param].astype(int)
+        elif param_type == "Real":
+            # Convert to floats
+            merged_df[param] = merged_df[param].astype(float)
+        else:
+            raise Exception(f"Unsupported parameter type '{param_type}' for parameter '{param}'.")
+
+    # Step 6: Prepare data for regression
+    y = merged_df["execution_time"].values
+    available_params = list(param_df.columns)
+    available_params.remove("trace_name")
+
+    selected_params = []
+    rmse = float(2**31 - 1)  # Initialize with a large value
+    expression = ""
+    model = None
+
+    # Step 7: Iteratively add parameters to the model
+    for _ in range(top_n):
+        best_param = None
+        best_rmse = float(2**31 - 1)
+        best_model = None
+        best_expression = ""
+        best_param_type = None
+
+        # Test each available parameter
+        for param in available_params:
+            current_params = selected_params + [param]
+            X = merged_df[current_params].values
+
+            # Fit a linear regression model
+            temp_model = LinearRegression()
+            temp_model.fit(X, y)
+
+            # Evaluate the model
+            y_pred = temp_model.predict(X)
+            temp_rmse = np.sqrt(mean_squared_error(y, y_pred))
+
+            # Round RMSE values to integers for comparison
+            rounded_temp_rmse = int(round(temp_rmse))
+            rounded_best_rmse = int(round(best_rmse))
+
+            # Get the parameter type
+            param_type = varying_params[varying_params["param_name"] == param]["type"].iloc[0]
+
+            # Keep track of the best parameter, prioritizing Boolean > Integer > Real
+            if (
+                rounded_temp_rmse < rounded_best_rmse or
+                (rounded_temp_rmse == rounded_best_rmse and best_param_type == "Real" and param_type in ["Boolean", "Integer"]) or
+                (rounded_temp_rmse == rounded_best_rmse and best_param_type == "Integer" and param_type == "Boolean")
+            ):
+                best_rmse = temp_rmse
+                best_param = param
+                best_model = temp_model
+                best_param_type = param_type
+                coefficients = best_model.coef_
+                intercept = best_model.intercept_
+                best_expression = f"{intercept:.2f} + " + " + ".join(
+                    [f"({coef:.2f} * {p})" for coef, p in zip(coefficients, current_params)]
+                )
+
+        # Stop if no improvement in RMSE
+        if best_param is None or int(round(best_rmse)) >= int(round(rmse)):
+            print("No improvement in RMSE. Stopping.")
+            break
+
+        # Update the selected parameters and model if the best parameter improves the RMSE
+        selected_params.append(best_param)
+        available_params.remove(best_param)
+        rmse = best_rmse
+        model = best_model
+        expression = best_expression
+
+        # Print the current expression and RMSE
+        print(f"Current expression: {expression}")
+        print(f"Current RMSE: {int(round(rmse))}")
+
+        # Stop if RMSE is below the threshold
+        if rmse <= rmse_threshold:
+            print("RMSE threshold met. Stopping.")
+            break
+
+    return {
+        "model": model,
+        "expression": expression,
+        "rmse": rmse,
+        "selected_parameters": selected_params
+    }
+
+
 def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tolerance=0.1):
     """
     For each process in the Processes table, performs a two-way ANOVA on execution times,
@@ -479,7 +669,8 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
 
         # Compute effect sizes
         trace_effect = df.groupby("trace_name")["time"].mean().max() - df.groupby("trace_name")["time"].mean().min() if n_traces > 1 else None
-        resolved_effect = df.groupby("resolved_name")["time"].mean().max() - df.groupby("resolved_name")["time"].mean().min() if n_resolved > 1 else None
+        resolved_effect = df.groupby("resolved_name")["time"].mean().max(
+        ) - df.groupby("resolved_name")["time"].mean().min() if n_resolved > 1 else None
 
         if enough_per_trace and enough_per_resolved and n_traces > 1 and n_resolved > 1:
             # Two-way ANOVA
@@ -548,8 +739,8 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
             })
         else:
             # Not enough data for ANOVA, use standard deviation
-            std_dev = df["time"].std() 
-            coeff_of_variation = std_dev / df["time"].mean() 
+            std_dev = df["time"].std()
+            coeff_of_variation = std_dev / df["time"].mean()
             results.append({
                 "process_name": process.name,
                 "test": "CV",
@@ -586,12 +777,16 @@ if __name__ == "__main__":
         {
             "html_file": "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_report.html",
             "log_file": "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_log.log"
+        },
+        {
+            "html_file": "./dat/250515_241226_CELEBI/karol_241226_ult_2025-05-15_13_41_42_report.html",
+            "log_file": "./dat/250515_241226_CELEBI/karol_241226_ult_2025-05-15_13_41_42_log.log"
         }
         # Add more file pairs as needed
     ]
 
     # Initialize the database manager with the path to the SQLite database
-    db_manager = NextflowTraceDBManager("nf_trace_db.sqlite")
+    db_manager = NextflowTraceDBManager("./dat/nf_trace_db.sqlite")
 
     # Establish a connection to the database
     db_manager.connect()
@@ -619,7 +814,7 @@ if __name__ == "__main__":
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", 1000)
     pd.set_option("display.max_rows", None)
-    
+
     # Print database information
     db_manager.printDBInfo()
 
@@ -627,6 +822,14 @@ if __name__ == "__main__":
     print("\n## ANOVA results on process execution times:")
     anova_results = anova_results.sort_values(by=["process_name"], ascending=[True])
     print(anova_results)
+
+    df = analyze_process_execution_correlation(db_manager, "generate_binconfig")
+    print("\n## Correlation results:")
+    print(df)
+
+    extract_execution_time_expression(db_manager, "generate_binconfig", top_n=3, rmse_threshold=10000)
+
+    extract_execution_time_expression(db_manager, "fcal1:corr_fcal:do_correlation", top_n=9, rmse_threshold=10000, is_resolved_name=True)
 
     db_manager.close()
     print("Connection closed.")

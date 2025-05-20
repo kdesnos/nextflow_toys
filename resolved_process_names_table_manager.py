@@ -86,6 +86,19 @@ class ResolvedProcessNamesTableManager:
 
         return [ResolvedProcessEntry(rId=row[0], pId=row[1], name=row[2]) for row in rows]
 
+    def getResolvedProcessesOfProcess(self, name):
+        """
+        Retrieve all resolved process entries associated with a specific process name.
+
+        :param name: The process name to search for.
+        :return: A list of ResolvedProcessEntry instances.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT rId, pId, name FROM ResolvedProcessNames WHERE pId = (SELECT pId FROM Processes WHERE name = ?);", (name,))
+        rows = cursor.fetchall()
+
+        return [ResolvedProcessEntry(rId=row[0], pId=row[1], name=row[2]) for row in rows]
+
     def removeResolvedProcessByName(self, name):
         """
         Remove a resolved process entry from the database by its name.

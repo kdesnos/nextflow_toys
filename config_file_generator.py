@@ -1,8 +1,12 @@
 from math import ceil
+from pathlib import Path
 import pandas as pd
 import datetime
 
-def generate_nextflow_config(trace_df, output_config_file):
+from nf_trace_db_manager import NextflowTraceDBManager
+from nf_trace_db_analyzer import analyze_process_execution_correlation, anova_on_process_execution_times, get_execution_times_distribution_charasteristics
+
+def generate_nextflow_config_from_trace(trace_df, output_config_file):
     """
     Generates a Nextflow configuration file based on the maximum realtime and peak_rss values for each process.
 
@@ -72,3 +76,92 @@ def generate_nextflow_config(trace_df, output_config_file):
 
 # Example usage
 # generate_nextflow_config(trace_df, 'path/to/output_config_file.config')
+
+
+def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_config_file: Path):
+    """
+    """
+
+    max_nb_retries = 3
+    
+    # Step 1: Perform ANOVA analysis
+    anova_results = anova_on_process_execution_times(db_manager)
+    
+    print("\n## ANOVA results:")
+    print(anova_results)
+
+    # Step 2.1: For processes and resolved processes with non-impactful traces, extract statistical information
+    stats_based_config = []
+
+    for _, row in anova_results.iterrows():
+        if not row['trace_significant']:
+            if not row['resolved_significant']:
+                # Per process stats
+                process_stats = get_execution_times_distribution_charasteristics(db_manager, row['process_name'])
+                stats_based_config.append({
+                    'process_name': row['process_name'],
+                    'mean_time': process_stats['mean_time'].iloc[0],
+                    'std_dev_time': process_stats['std_dev_time'].iloc[0],
+                    'min_time': process_stats['min_time'].iloc[0],
+                    'max_time': process_stats['max_time'].iloc[0]
+                })
+            else:
+                # Per resolved process stats
+                # Find process names
+                rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(row['process_name'])
+                for rp in rp_list:
+                    process_stats = get_execution_times_distribution_charasteristics(db_manager, rp.name, is_resolved_name=True)
+                    stats_based_config.append({
+                        'process_name': rp.name,
+                        'mean_time': process_stats['mean_time'].iloc[0],
+                        'std_dev_time': process_stats['std_dev_time'].iloc[0],
+                        'min_time': process_stats['min_time'].iloc[0],
+                        'max_time': process_stats['max_time'].iloc[0]
+                    })
+
+    # Step 2.2: For processes and resloved processes with impactful traces, parameter-dependent prediction
+        elif not row['resolved_significant']: 
+            correlation = analyze_process_execution_correlation(db_manager, row['process_name'], skip_warnings=True)
+            print(f"\n## Correlation for process {row['process_name']}:")   
+            print(correlation)
+
+
+    # Convert the collected stats into a pandas DataFrame
+    stats_based_config = pd.DataFrame(stats_based_config)
+
+    
+    # Step 3: Generate the Nextflow configuration file
+    with open(output_config_file, 'w') as file:
+        # Write the process block header
+        file.write(f"// Config file generated from a traces database on the {datetime.datetime.now()}\n\n")
+        file.write("process {\n")
+        file.write("    // Default error handling strategy for all process errors.\n")
+        file.write("    errorStrategy = 'retry'\n")
+        file.write(f"    maxRetries = {max_nb_retries}\n\n")
+
+        # Print content for stats-based configuration
+        file.write("    // Per-process time and memory limits corresponding observed mean execution time plus 3 std dev.\n")
+        file.write("    // 60 extra seconds are added to account for the early termination of jobs by Slurm,\n")
+        file.write("    // as requested by Nextflow job with the B:USR2 signal.\n")
+
+        for index, row in stats_based_config.iterrows():
+            process = row['process_name']
+            mean_time = row['mean_time'] / 1000.0 # Convert to seconds
+            std_dev_time = row['std_dev_time'] / 1000.0 # Convert to seconds
+            
+            file.write(f"    withName: '{process}' {{\n")
+            file.write(f"        time = {{ ({mean_time:.2f} + 3.0 * {std_dev_time:.2f} + 60.0) * Math.pow(1.25, (task.attempt - 1)) * 1.s }}\n")
+            file.write("    }\n\n")
+
+
+        # Footer for the process block
+        file.write("}\n")
+
+
+if __name__ == "__main__":
+    # Example usage
+    db_manager = NextflowTraceDBManager("./dat/nf_trace_db.sqlite")
+    db_manager.connect()
+    output_config_file = Path("./dat/celebi_from_db.config")
+    
+    generate_nextflow_config_from_db(db_manager, output_config_file)
