@@ -1,7 +1,7 @@
 import unittest
 
 import pandas as pd
-from nf_trace_db_analyzer import analyze_process_execution_correlation, analyze_process_execution_time_consistency, anova_on_process_execution_times, get_execution_times_distribution_charasteristics, identify_process_execution_time_consistency, identify_variable_pipeline_numerical_parameters, print_process_execution_time_consistency, summarize_consistency_analysis
+from nf_trace_db_analyzer import analyze_process_execution_correlation, analyze_process_execution_time_consistency, anova_on_process_execution_times, get_execution_times_distribution_charasteristics, identify_process_execution_time_consistency, identify_variable_pipeline_numerical_parameters, print_process_execution_time_consistency, summarize_consistency_analysis, extract_execution_time_expression
 from nf_trace_db_manager import NextflowTraceDBManager
 
 
@@ -177,6 +177,87 @@ class TestNextflowTraceDBAnalyzer(unittest.TestCase):
         print(stats)
         self.assertEqual(stats["mean_time"][0], 112115.75)
         self.assertEqual(stats["std_dev_time"][0], 10778.339815922493)
+
+    def test_extract_execution_time_expression_process(self):
+        """
+        Test the extract_execution_time_expression method with a regular process name.
+        """
+        # Test with regular process name
+        process_name = "generate_binconfig"
+        result = extract_execution_time_expression(self.db_manager, process_name, top_n=2, rmse_threshold=100000)
+
+        # Check that the result has the expected structure
+        self.assertIsInstance(result, dict)
+        self.assertIn("model", result)
+        self.assertIn("expression", result)
+        self.assertIn("rmse", result)
+        self.assertIn("selected_parameters", result)
+
+        # Check that the expression is a non-empty string
+        self.assertIsInstance(result["expression"], str)
+        self.assertTrue(len(result["expression"]) > 0)
+
+        # Check that at least one parameter was selected
+        self.assertIsInstance(result["selected_parameters"], list)
+        self.assertTrue(len(result["selected_parameters"]) > 0)
+
+        # RMSE should be a positive float
+        self.assertIsInstance(result["rmse"], float)
+        self.assertGreater(result["rmse"], 0)
+
+        # Check that the expression contains the selected parameters
+        for param in result["selected_parameters"]:
+            if not param.startswith("previous_model_"):  # Skip model parameters in checking
+                self.assertIn(param, result["expression"])
+
+        # Print some information for manual inspection
+        print(f"\nProcess expression: {result['expression']}")
+        print(f"Process RMSE: {result['rmse']:.2f}")
+        print(f"Process parameters: {result['selected_parameters']}")
+
+    def test_extract_execution_time_expression_resolved_process(self):
+        """
+        Test the extract_execution_time_expression method with a resolved process name.
+        """
+        # Test with resolved process name
+        resolved_process_name = "fcal1:corr_fcal:do_correlation"
+        result = extract_execution_time_expression(
+            self.db_manager,
+            resolved_process_name,
+            top_n=2,
+            rmse_threshold=100000,
+            is_resolved_name=True
+        )
+
+        # Check that the result has the expected structure
+        self.assertIsInstance(result, dict)
+        self.assertIn("model", result)
+        self.assertIn("expression", result)
+        self.assertIn("rmse", result)
+        self.assertIn("selected_parameters", result)
+
+        # Check that the expression is a non-empty string
+        self.assertIsInstance(result["expression"], str)
+        self.assertTrue(len(result["expression"]) > 0)
+
+        # Check that at least one parameter was selected
+        self.assertIsInstance(result["selected_parameters"], list)
+        self.assertTrue(len(result["selected_parameters"]) > 0)
+
+        # RMSE should be a positive float
+        self.assertIsInstance(result["rmse"], float)
+        self.assertGreater(result["rmse"], 0)
+
+        # Check that the expression contains the selected parameters
+        for param in result["selected_parameters"]:
+            if not param.startswith("previous_model_"):  # Skip model parameters in checking
+                self.assertIn(param, result["expression"])
+
+        # Print some information for manual inspection
+        print(f"\nResolved process expression: {result['expression']}")
+        print(f"Resolved process RMSE: {result['rmse']:.2f}")
+        print(f"Resolved process parameters: {result['selected_parameters']}")
+
 
 if __name__ == "__main__":
     unittest.main()

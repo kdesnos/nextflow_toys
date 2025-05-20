@@ -488,7 +488,7 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
     return correlation_df
 
 
-def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_threshold=15000, is_resolved_name=False):
+def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_threshold=15000, is_resolved_name=False, print_info=False):
     """
     Extract an expression for predicting execution time as a function of the best parameters.
 
@@ -497,6 +497,7 @@ def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_th
     :param top_n: Maximum number of top parameters to use for the regression model.
     :param rmse_threshold: RMSE threshold for stopping the iterative parameter addition.
     :param is_resolved_name: If True, treat process_name as a resolved process name.
+    :param print_info: If True, print the current expression and RMSE during the process.
     :return: A dictionary containing the regression model, the expression, and evaluation metrics.
     """
     # Step 1: Retrieve varying pipeline parameters
@@ -588,9 +589,9 @@ def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_th
 
             # Keep track of the best parameter, prioritizing Boolean > Integer > Real
             if (
-                rounded_temp_rmse < rounded_best_rmse or
-                (rounded_temp_rmse == rounded_best_rmse and best_param_type == "Real" and param_type in ["Boolean", "Integer"]) or
-                (rounded_temp_rmse == rounded_best_rmse and best_param_type == "Integer" and param_type == "Boolean")
+                rounded_temp_rmse < rounded_best_rmse
+                or (rounded_temp_rmse == rounded_best_rmse and best_param_type == "Real" and param_type in ["Boolean", "Integer"])
+                or (rounded_temp_rmse == rounded_best_rmse and best_param_type == "Integer" and param_type == "Boolean")
             ):
                 best_rmse = temp_rmse
                 best_param = param
@@ -604,7 +605,8 @@ def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_th
 
         # Stop if no improvement in RMSE
         if best_param is None or int(round(best_rmse)) >= int(round(rmse)):
-            print("No improvement in RMSE. Stopping.")
+            if print_info:
+                print(f"Best RMSE: {int(round(best_rmse))} is not better than current RMSE: {int(round(rmse))}. Stopping.")
             break
 
         # Update the selected parameters and model if the best parameter improves the RMSE
@@ -615,12 +617,14 @@ def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_th
         expression = best_expression
 
         # Print the current expression and RMSE
-        print(f"Current expression: {expression}")
-        print(f"Current RMSE: {int(round(rmse))}")
+        if print_info:
+            print(f"Current expression: {expression}")
+            print(f"Current RMSE: {int(round(rmse))}")
 
         # Stop if RMSE is below the threshold
         if rmse <= rmse_threshold:
-            print("RMSE threshold met. Stopping.")
+            if print_info:
+                print(f"RMSE: {int(round(rmse))} is below the threshold of {rmse_threshold}. Stopping.")
             break
 
     return {
@@ -829,7 +833,7 @@ if __name__ == "__main__":
 
     extract_execution_time_expression(db_manager, "generate_binconfig", top_n=3, rmse_threshold=10000)
 
-    extract_execution_time_expression(db_manager, "fcal1:corr_fcal:do_correlation", top_n=9, rmse_threshold=10000, is_resolved_name=True)
+    extract_execution_time_expression(db_manager, "fcal1:corr_fcal:do_correlation", top_n=9, rmse_threshold=10000, is_resolved_name=True, print_info=True)
 
     db_manager.close()
     print("Connection closed.")
