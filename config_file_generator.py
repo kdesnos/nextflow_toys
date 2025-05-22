@@ -81,6 +81,7 @@ def generate_nextflow_config_from_trace(trace_df, output_config_file):
 
 def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_config_file: Path):
     """
+    Generate a Nextflow configuration file based on linear regression models and statistical analysis.
     """
 
     max_nb_retries = 3
@@ -121,10 +122,10 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
                     'max_time': process_stats['max_time'].iloc[0]
                 })
 
-        # Step 2.2: For processes and resloved processes with impactful traces, parameter-dependent prediction
+        # Step 2.2: For processes and resolved processes with impactful traces, parameter-dependent prediction
         elif row['trace_significant'] and not row['resolved_significant']:
             # Per process prediction
-            model = extract_execution_time_quantile_reg(db_manager, process_name=row['process_name'], is_resolved_name=False, quantile=0.95)
+            model = extract_execution_time_linear_reg(db_manager, process_name=row['process_name'], is_resolved_name=False)
             model_based_config.append({
                 'process_name': row['process_name'],
                 'model': model
@@ -134,7 +135,7 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
             rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(row['process_name'])
             for rp in rp_list:
                 # Find process names
-                model = extract_execution_time_quantile_reg(db_manager, process_name=rp.name, is_resolved_name=True, quantile=0.95)
+                model = extract_execution_time_linear_reg(db_manager, process_name=rp.name, is_resolved_name=True)
                 model_based_config.append({
                     'process_name': rp.name,
                     'model': model
@@ -154,7 +155,7 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
         file.write(f"    maxRetries = {max_nb_retries}\n\n")
 
         # Print content for stats-based configuration
-        file.write("    // Per-process time limits corresponding observed mean execution time plus 3 std dev.\n")
+        file.write("    // Per-process time limits corresponding observed mean execution time plus 2 times the std dev.\n")
         file.write("    // 60 extra seconds are added to account for the early termination of jobs by Slurm,\n")
         file.write("    // as requested by Nextflow job with the B:USR2 signal.\n")
 
@@ -164,11 +165,12 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
             std_dev_time = row['std_dev_time'] / 1000.0  # Convert to seconds
 
             file.write(f"    withName: '{process}' {{\n")
-            file.write(f"        time = {{ ({mean_time:.2f} + 3.0 * {std_dev_time:.2f} + 60.0) * Math.pow(1.25, (task.attempt - 1)) * 1.s }}\n")
+            file.write(f"        time = {{ ({mean_time:.2f} + 2.0 * {std_dev_time:.2f} + 60.0) * Math.pow(1.25, (task.attempt - 1)) * 1.s }}\n")
             file.write("    }\n\n")
 
         # Print content for parameter-dependent configuration
         file.write("    // Per-process time limits corresponding to parameter-dependent execution time.\n")
+        file.write("    // 2 times the RMSE of the linear regression is added to the expression to encompass 95% of values.\n")
         file.write("    // 60 extra seconds are added to account for the early termination of jobs by Slurm,\n")
         file.write("    // as requested by Nextflow job with the B:USR2 signal.\n")
 
@@ -176,10 +178,20 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
             process = row['process_name']
             model = row['model']['model']
             params = row['model']['selected_parameters']
+            rmse = row['model']['rmse']
 
-            expression = f"{(model.params[0]/1000.0):.4f} + " + " + ".join(
-                     [f"({coef/1000.0:.4f} * {f"params.{p}" if not params[p]['type'] == 'Boolean' else f"(params.{p} ? 1.0 : 0.0)"} )" for coef, p in zip(model.params[1:], params.keys())] # converted in seconds
-                 )
+            # Generate the expression for the linear regression model
+            # Divide by 1000.0 to convert to seconds
+            expression = f"{(model.intercept_):.0f} + " + " + ".join(
+                [f"({coef:.0f} * {f'params.{p}' if not params[p]['type'] == 'Boolean' else f'(params.{p} ? 1.0 : 0.0)'} )" for coef,
+                    p in zip(model.coef_, params.keys())]  # converted in seconds
+            )
+
+            # Add RMSE to the expression
+            expression += f" + 2.0 * {rmse:.0f}"
+
+            # Divide by 1000.0 to convert to seconds
+            expression = f"({expression}) / 1000.0"
 
             file.write(f"    withName: '{process}' {{\n")
             file.write(f"        time = {{ ({expression} + 60.0) * Math.pow(1.25, (task.attempt - 1)) * 1.s }}\n")
