@@ -7,6 +7,8 @@ from scipy.stats import f_oneway
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
 import numpy as np
+import warnings
+from statsmodels.tools.sm_exceptions import IterationLimitWarning, ConvergenceWarning
 
 
 def analyze_process_execution_time_consistency(
@@ -488,7 +490,7 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
     return correlation_df
 
 
-def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_threshold=15000, is_resolved_name=False, print_info=False):
+def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_threshold=15000, is_resolved_name=False, print_info=False):
     """
     Extract an expression for predicting execution time as a function of the best parameters.
 
@@ -555,6 +557,9 @@ def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_th
     available_params.remove("trace_name")
 
     selected_params = []
+    selected_params_info = {}  # Dictionary to store parameter info (name and type)
+    all_expressions = []  # Store all expressions created during iterations
+    all_rmse = []  # Store all RMSE values
     rmse = float(2**31 - 1)  # Initialize with a large value
     expression = ""
     model = None
@@ -580,9 +585,9 @@ def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_th
             y_pred = temp_model.predict(X)
             temp_rmse = np.sqrt(mean_squared_error(y, y_pred))
 
-            # Round RMSE values to integers for comparison
-            rounded_temp_rmse = int(round(temp_rmse))
-            rounded_best_rmse = int(round(best_rmse))
+            # Round RMSE values for comparison
+            rounded_temp_rmse = round(temp_rmse)
+            rounded_best_rmse = round(best_rmse)
 
             # Get the parameter type
             param_type = varying_params[varying_params["param_name"] == param]["type"].iloc[0]
@@ -604,34 +609,159 @@ def extract_execution_time_expression(db_manager, process_name, top_n=3, rmse_th
                 )
 
         # Stop if no improvement in RMSE
-        if best_param is None or int(round(best_rmse)) >= int(round(rmse)):
+        if best_param is None or round(best_rmse) >= round(rmse):
             if print_info:
-                print(f"Best RMSE: {int(round(best_rmse))} is not better than current RMSE: {int(round(rmse))}. Stopping.")
+                print(f"Best RMSE: {round(best_rmse):.0f} is not better than current RMSE: {round(rmse):.0f}. Stopping.")
             break
 
         # Update the selected parameters and model if the best parameter improves the RMSE
         selected_params.append(best_param)
+        # Store parameter info (name and type)
+        selected_params_info[best_param] = {
+            "type": varying_params[varying_params["param_name"] == best_param]["type"].iloc[0]
+        }
+
         available_params.remove(best_param)
         rmse = best_rmse
         model = best_model
         expression = best_expression
 
+        # Store this iteration's expression and RMSE
+        all_expressions.append(expression)
+        all_rmse.append(rmse)
+
         # Print the current expression and RMSE
         if print_info:
             print(f"Current expression: {expression}")
-            print(f"Current RMSE: {int(round(rmse))}")
+            print(f"Current RMSE: {round(rmse):.0f}")
 
         # Stop if RMSE is below the threshold
         if rmse <= rmse_threshold:
             if print_info:
-                print(f"RMSE: {int(round(rmse))} is below the threshold of {rmse_threshold}. Stopping.")
+                print(f"RMSE: {round(rmse):.0f} is below the threshold of {rmse_threshold}. Stopping.")
             break
 
     return {
         "model": model,
         "expression": expression,
+        "all_expressions": all_expressions,
+        "all_rmse": all_rmse,
         "rmse": rmse,
-        "selected_parameters": selected_params
+        "selected_parameters": selected_params_info  # Now contains parameter names and types
+    }
+
+
+def extract_execution_time_quantile_reg(db_manager, process_name, quantile=0.5, top_n=3,
+                                        rmse_threshold=15000, is_resolved_name=False, print_info=False):
+    """
+    Extract an expression for predicting execution time as a function of the best parameters using quantile regression.
+    Uses linear regression for parameter selection, then applies quantile regression for the final result.
+
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param process_name: The name of the process to analyze.
+    :param quantile: The quantile to model (0.5 for median, 0.9 for 90th percentile, etc.)
+    :param top_n: Maximum number of top parameters to use for the regression model.
+    :param rmse_threshold: RMSE threshold for stopping the iterative parameter addition.
+    :param is_resolved_name: If True, treat process_name as a resolved process name.
+    :param print_info: If True, print the current expression and RMSE during the process.
+    :return: A dictionary containing the regression model, the expression, and evaluation metrics.
+    """
+    # First, use linear regression to select the best parameters
+    if print_info:
+        print(f"Using linear regression for parameter selection, final model will use quantile q={quantile}")
+
+    # Call the linear regression function to get the selected parameters
+    linear_result = extract_execution_time_linear_reg(
+        db_manager,
+        process_name,
+        top_n=top_n,
+        rmse_threshold=rmse_threshold,
+        is_resolved_name=is_resolved_name,
+        print_info=print_info
+    )
+
+    # Extract the selected parameters and their info
+    selected_params = list(linear_result["selected_parameters"].keys())
+    selected_params_info = linear_result["selected_parameters"]
+
+    # If no parameters were selected, return early
+    if not selected_params:
+        return {
+            "model": None,
+            "expression": "",
+            "all_expressions": linear_result["all_expressions"],
+            "all_rmse": linear_result["all_rmse"],
+            "rmse": float("inf"),
+            "selected_parameters": selected_params_info,
+            "quantile": quantile,
+            "selection_method": "linear_regression",
+            "regression_type": "quantile"
+        }
+
+    # Now retrieve the data again to build the quantile regression model
+    varying_params = identify_variable_pipeline_numerical_parameters(db_manager)
+    query = f"""
+        SELECT pe.time AS execution_time, t.name AS trace_name
+        FROM ProcessExecutions pe
+        JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
+        JOIN Processes p ON rpn.pId = p.pId
+        JOIN Traces t ON pe.tId = t.tId
+        WHERE {"p" if not is_resolved_name else "rpn"}.name = ?;
+    """
+    cursor = db_manager.connection.cursor()
+    cursor.execute(query, (process_name,))
+    execution_data = cursor.fetchall()
+
+    execution_df = pd.DataFrame(execution_data, columns=["execution_time", "trace_name"])
+    param_df = varying_params.pivot(index="trace_name", columns="param_name", values="value").reset_index()
+    merged_df = execution_df.merge(param_df, on="trace_name", how="inner")
+
+    # Convert parameter values to numerical types
+    for param in selected_params:
+        param_type = varying_params[varying_params["param_name"] == param]["type"].iloc[0]
+        if param_type == "Boolean":
+            merged_df[param] = merged_df[param].map({"True": 1, "False": 0})
+        elif param_type == "Integer":
+            merged_df[param] = merged_df[param].astype(int)
+        elif param_type == "Real":
+            merged_df[param] = merged_df[param].astype(float)
+
+    # Get the data for the selected parameters
+    y = merged_df["execution_time"].values
+    X_final = merged_df[selected_params].values
+    X_final_with_intercept = sm.add_constant(X_final)
+
+    # Fit the quantile regression model with the requested quantile
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=IterationLimitWarning)
+        warnings.filterwarnings("ignore", category=ConvergenceWarning)
+        final_model = sm.QuantReg(y, X_final_with_intercept).fit(q=quantile)
+
+    # Build the expression using the quantile regression coefficients
+    final_intercept = final_model.params[0]
+    final_coefficients = final_model.params[1:]
+    final_expression = f"{final_intercept:.2f} + " + " + ".join(
+        [f"({coef:.2f} * {p})" for coef, p in zip(final_coefficients, selected_params)]
+    )
+
+    # Calculate final RMSE with the quantile regression
+    y_final_pred = final_model.predict(X_final_with_intercept)
+    final_rmse = np.sqrt(mean_squared_error(y, y_final_pred))
+
+    if print_info:
+        print(f"\nFinal expression (q={quantile}): {final_expression}")
+        print(f"Final RMSE (q={quantile}): {round(final_rmse):.0f}")
+
+    return {
+        "model": final_model,
+        "expression": final_expression,
+        "all_expressions": linear_result["all_expressions"],  # These are from linear regression
+        "all_rmse": linear_result["all_rmse"],               # These are from linear regression
+        "rmse": final_rmse,
+        "selected_parameters": selected_params_info,
+        "quantile": quantile,
+        "selection_method": "linear_regression",
+        "regression_type": "quantile"
     }
 
 
@@ -831,9 +961,33 @@ if __name__ == "__main__":
     print("\n## Correlation results:")
     print(df)
 
-    extract_execution_time_expression(db_manager, "generate_binconfig", top_n=3, rmse_threshold=10000)
+    extract_execution_time_linear_reg(db_manager, "generate_binconfig", top_n=3, rmse_threshold=10000, print_info=True)
+    extract_execution_time_quantile_reg(db_manager, "generate_binconfig", top_n=3, rmse_threshold=10000, print_info=True, quantile=0.95)
 
-    extract_execution_time_expression(db_manager, "fcal1:corr_fcal:do_correlation", top_n=9, rmse_threshold=10000, is_resolved_name=True, print_info=True)
+    extract_execution_time_linear_reg(
+        db_manager,
+        "fcal1:corr_fcal:do_correlation",
+        top_n=9,
+        rmse_threshold=10000,
+        is_resolved_name=True,
+        print_info=True)
+
+    extract_execution_time_quantile_reg(
+        db_manager,
+        "fcal1:corr_fcal:do_correlation",
+        top_n=9,
+        rmse_threshold=10000,
+        is_resolved_name=True,
+        print_info=True,
+        quantile=0.95)
+
+    extract_execution_time_linear_reg(
+        db_manager,
+        "frb:corr_field:do_correlation",
+        top_n=9,
+        rmse_threshold=10000,
+        is_resolved_name=True,
+        print_info=True)
 
     db_manager.close()
     print("Connection closed.")
