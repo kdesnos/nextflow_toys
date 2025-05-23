@@ -199,6 +199,27 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertEqual(all_executions[2].cpu, "Intel Core i9")
         self.assertEqual(all_executions[2].nbCores, 16)
 
+    def test_getExecutionTimesForProcessAndTraces(self):
+        # Add process executions to the database
+        execution_entry_1 = ProcessExecutionEntry(
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45, cpu="Intel Core i7", nbCores=4
+        )
+        execution_entry_2 = ProcessExecutionEntry(
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2, hash="hash2", time=456.78, cpu="AMD Ryzen 7", nbCores=8
+        )
+        self.execution_manager.addProcessExecution(execution_entry_1)
+        self.execution_manager.addProcessExecution(execution_entry_2)
+
+        # Retrieve execution times for the process and trace
+        execution_times = self.execution_manager.getExecutionTimesForProcessAndTraces("resolved_process", [self.trace_entry.name], is_resolved_name=True)
+        self.assertEqual(len(execution_times), 2)
+        self.assertEqual(execution_times.iloc[0]["execution_time"], 123.45)
+        self.assertEqual(execution_times.iloc[1]["execution_time"], 456.78)
+
+        # Test with a non-existent process
+        execution_times_empty = self.execution_manager.getExecutionTimesForProcessAndTraces("non_existent_process", [self.trace_entry.name])
+        self.assertTrue(execution_times_empty.empty)
+
 
 if __name__ == "__main__":
     unittest.main()

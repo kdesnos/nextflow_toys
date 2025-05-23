@@ -18,7 +18,13 @@ class ProcessExecutionTableManager:
         cursor = self.connection.cursor()
         cursor.execute(
             "INSERT INTO ProcessExecutions (tId, rId, instance, hash, time, cpu, nbCores) VALUES (?, ?, ?, ?, ?, ?, ?);",
-            (execution_entry.tId, execution_entry.rId, execution_entry.instance, execution_entry.hash, execution_entry.time, execution_entry.cpu, execution_entry.nbCores),
+            (execution_entry.tId,
+             execution_entry.rId,
+             execution_entry.instance,
+             execution_entry.hash,
+             execution_entry.time,
+             execution_entry.cpu,
+             execution_entry.nbCores),
         )
         self.connection.commit()
 
@@ -139,6 +145,65 @@ class ProcessExecutionTableManager:
 
         # Check if any rows were affected
         return cursor.rowcount > 0
+
+    def getExecutionTimesForProcessAndTraces(self, process_name, trace_names=None, is_resolved_name=False):
+        """
+        Get execution times for a specific process and trace(s).
+
+        :param process_name: Name of the process to retrieve execution times for.
+        :param trace_names: List of trace names or a single trace name to filter the results. If None, fetch for all traces.
+        :param is_resolved_name: Whether the process_name is a resolved name (True) or a basic process name (False).
+        :return: A DataFrame containing execution times and related information for the specified process and traces.
+        """
+        import pandas as pd
+
+        if isinstance(trace_names, str):
+            trace_names = [trace_names]
+
+        all_results = []
+        query = f"""
+            SELECT
+                pe.eId,
+                pe.time AS execution_time,
+                pe.instance,
+                pe.cpu,
+                t.name AS trace_name,
+                rpn.name AS resolved_process_name
+            FROM
+                ProcessExecutions pe
+            JOIN
+                ResolvedProcessNames rpn ON pe.rId = rpn.rId
+            JOIN
+                Traces t ON pe.tId = t.tId
+            JOIN
+                Processes p ON rpn.pId = p.pId
+            WHERE
+                {"p" if not is_resolved_name else "rpn"}.name = ?
+        """
+        params = [process_name]
+
+        if trace_names:
+            query += " AND t.name IN ({})".format(",".join("?" for _ in trace_names))
+            params.extend(trace_names)
+
+        query += " ORDER BY pe.instance"
+
+        cursor = self.connection.cursor()
+        cursor.execute(query, params)
+        execution_data = cursor.fetchall()
+
+        if execution_data:
+            df = pd.DataFrame(execution_data,
+                              columns=["eId", "execution_time", "instance",
+                                       "cpu", "trace_name", "resolved_process_name"])
+            all_results.append(df)
+        else:
+            print(f"No execution times found for process '{process_name}'")
+
+        if all_results:
+            return pd.concat(all_results, ignore_index=True)
+        else:
+            return pd.DataFrame()
 
 
 class ProcessExecutionEntry:

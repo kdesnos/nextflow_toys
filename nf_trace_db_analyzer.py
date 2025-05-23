@@ -314,40 +314,63 @@ def summarize_consistency_analysis(
     return summary
 
 
-def identify_variable_pipeline_numerical_parameters(db_manager):
+def identify_variable_pipeline_numerical_parameters(db_manager, trace_names=None):
     """
     Finds the parameters in the PipelineParams table that are numerical and have
-    different values across all traces.
+    different values across all traces. Converts parameter values to their appropriate
+    numerical types based on their type.
 
     :param db_manager: An instance of NextflowTraceDBManager.
-    :return: A DataFrame with the parameters that are variable across the specified traces.
+    :param trace_names: Optional list of trace names to filter the results. If None, all traces are included.
+    :return: A DataFrame with the parameters that are variable across the specified traces,
+             with values converted to their appropriate numerical types.
     """
     # SQL query to get the list of pipeline parameters used for the specified traces
     query = """
-        SELECT pp.name, t.name, ppv.value, pp.type
+        SELECT pp.name AS param_name, t.name AS trace_name, ppv.value, pp.type
         FROM PipelineParams pp
         JOIN (
-        	SELECT ppv.paramId FROM PipelineParamValues ppv
-        	JOIN Traces t ON ppv.tId = t.tId
-        	JOIN PipelineParams pp ON pp.paramId = ppv.paramId
-        	WHERE pp.type IN ('Integer', 'Real', 'Boolean') -- For now, ignore 'List[Real]', 'List[Integer]', 'List[Boolean]'
-        	GROUP BY ppv.paramId
-        	HAVING COUNT(DISTINCT ppv.value) > 1
+            SELECT ppv.paramId FROM PipelineParamValues ppv
+            JOIN Traces t ON ppv.tId = t.tId
+            JOIN PipelineParams pp ON pp.paramId = ppv.paramId
+            WHERE pp.type IN ('Integer', 'Real', 'Boolean') -- For now, ignore 'List[Real]', 'List[Integer]', 'List[Boolean]'
+            GROUP BY ppv.paramId
+            HAVING COUNT(DISTINCT ppv.value) > 1
         ) AS J ON pp.paramId = J.paramId
         JOIN PipelineParamValues ppv ON J.paramId = ppv.paramId
-        JOIN Traces t ON t.tId = ppv.tId;
-        """
+        JOIN Traces t ON t.tId = ppv.tId
+    """
+
+    # Add filtering for trace names if provided
+    params = []
+    if trace_names:
+        placeholders = ",".join("?" for _ in trace_names)
+        query += f" WHERE t.name IN ({placeholders})"
+        params.extend(trace_names)
 
     # Execute the query and fetch the results
     cursor = db_manager.connection.cursor()
-    cursor.execute(query)
+    cursor.execute(query, params)
     results = cursor.fetchall()
 
     # Create a DataFrame from the query results
     column_names = ["param_name", "trace_name", "value", "type"]
     df = pd.DataFrame(results, columns=column_names)
 
-    # Return the DataFrame with variable parameters
+    # Convert parameter values to their appropriate numerical types
+    def convert_value(row):
+        if row["type"] == "Boolean":
+            return 1 if row["value"] == "True" else 0
+        elif row["type"] == "Integer":
+            return int(row["value"])
+        elif row["type"] == "Real":
+            return float(row["value"])
+        else:
+            raise Exception(f"Unsupported parameter type '{row['type']}' for parameter '{row['param_name']}'.")
+
+    df["value"] = df.apply(convert_value, axis=1)
+
+    # Return the DataFrame with variable parameters and converted values
     return df
 
 
@@ -490,7 +513,7 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
     return correlation_df
 
 
-def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_threshold=15000, is_resolved_name=False, print_info=False):
+def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_threshold=15000, is_resolved_name=False, print_info=False, trace_names=None):
     """
     Extract an expression for predicting execution time as a function of the best parameters.
 
@@ -500,31 +523,24 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
     :param rmse_threshold: RMSE threshold for stopping the iterative parameter addition.
     :param is_resolved_name: If True, treat process_name as a resolved process name.
     :param print_info: If True, print the current expression and RMSE during the process.
+    :param trace_names: Optional list of trace names to filter the data. If None, all traces are included.
     :return: A dictionary containing the regression model, the expression, and evaluation metrics.
     """
     # Step 1: Retrieve varying pipeline parameters
-    varying_params = identify_variable_pipeline_numerical_parameters(db_manager)
+    varying_params = identify_variable_pipeline_numerical_parameters(db_manager, trace_names=trace_names)
     if varying_params.empty:
         raise Exception("No varying pipeline parameters found.")
 
     # Step 2: Retrieve execution times for the given process
-    query = f"""
-        SELECT pe.time AS execution_time, t.name AS trace_name
-        FROM ProcessExecutions pe
-        JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
-        JOIN Processes p ON rpn.pId = p.pId
-        JOIN Traces t ON pe.tId = t.tId
-        WHERE {"p" if not is_resolved_name else "rpn"}.name = ?;
-    """
-    cursor = db_manager.connection.cursor()
-    cursor.execute(query, (process_name,))
-    execution_data = cursor.fetchall()
+    execution_times = db_manager.process_executions_manager.getExecutionTimesForProcessAndTraces(
+        process_name, trace_names=trace_names, is_resolved_name=is_resolved_name
+    )
 
-    if not execution_data:
+    if execution_times.empty:
         raise Exception(f"No execution times found for process '{process_name}'.")
 
-    # Convert execution data to a DataFrame
-    execution_df = pd.DataFrame(execution_data, columns=["execution_time", "trace_name"])
+    # Convert execution times to a DataFrame
+    execution_df = execution_times[["execution_time", "trace_name"]]
 
     # Step 3: Pivot the varying_params DataFrame to have one row per trace and columns for each parameter
     param_df = varying_params.pivot(index="trace_name", columns="param_name", values="value").reset_index()
@@ -532,26 +548,7 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
     # Step 4: Merge execution times with varying parameter values
     merged_df = execution_df.merge(param_df, on="trace_name", how="inner")
 
-    # Step 5: Convert parameter values to numerical types based on the "type" column
-    for param in param_df.columns:
-        if param == "trace_name":
-            continue
-
-        # Check the type of the parameter and convert accordingly
-        param_type = varying_params[varying_params["param_name"] == param]["type"].iloc[0]
-        if param_type == "Boolean":
-            # Convert Boolean values to 0 (False) and 1 (True)
-            merged_df[param] = merged_df[param].map({"True": 1, "False": 0})
-        elif param_type == "Integer":
-            # Convert to integers
-            merged_df[param] = merged_df[param].astype(int)
-        elif param_type == "Real":
-            # Convert to floats
-            merged_df[param] = merged_df[param].astype(float)
-        else:
-            raise Exception(f"Unsupported parameter type '{param_type}' for parameter '{param}'.")
-
-    # Step 6: Prepare data for regression
+    # Step 5: Prepare data for regression
     y = merged_df["execution_time"].values
     available_params = list(param_df.columns)
     available_params.remove("trace_name")
@@ -564,7 +561,7 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
     expression = ""
     model = None
 
-    # Step 7: Iteratively add parameters to the model
+    # Step 6: Iteratively add parameters to the model
     for _ in range(top_n):
         best_param = None
         best_rmse = float(2**31 - 1)

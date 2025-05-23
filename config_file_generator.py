@@ -4,7 +4,7 @@ import pandas as pd
 import datetime
 
 from nf_trace_db_manager import NextflowTraceDBManager
-from nf_trace_db_analyzer import analyze_process_execution_correlation, anova_on_process_execution_times, extract_execution_time_linear_reg, extract_execution_time_quantile_reg, get_execution_times_distribution_charasteristics
+from nf_trace_db_analyzer import analyze_process_execution_correlation, anova_on_process_execution_times, extract_execution_time_linear_reg, get_execution_times_distribution_charasteristics
 
 
 def generate_nextflow_config_from_trace(trace_df, output_config_file):

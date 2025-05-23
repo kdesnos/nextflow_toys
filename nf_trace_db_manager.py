@@ -321,7 +321,7 @@ class NextflowTraceDBManager:
 # Main prog
 if __name__ == "__main__":
     # Initialize the database manager with the path to the SQLite database
-    db_manager = NextflowTraceDBManager("nf_trace_db.sqlite")
+    db_manager = NextflowTraceDBManager("./dat/nf_trace_db.sqlite")
 
     # Establish a connection to the database
     db_manager.connect()
@@ -339,14 +339,19 @@ if __name__ == "__main__":
         "./dat/250510_210912_CELEBI/karol_210912_ult_2025-05-10_10_30_18_report.html",
         "./dat/250511_250201_CELEBI/karol_250201_2025-05-11_09_56_28_report.html",
         "./dat/250508_250313_CELEBI/karol_250313_2025-05-08_10_36_28_report.html",
-        "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_report.html",]
+        "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_report.html",
+        "./dat/250515_241226_CELEBI/karol_241226_ult_2025-05-15_13_41_42_report.html",
+        "./dat/250522_241027_CELEBI/karol_241027_ult_2025-05-22_10_05_56_report.html"
+        ]
 
     # Add process definitions
     log_files = [
         "./dat/250510_210912_CELEBI/karol_210912_ult_2025-05-10_10_30_18_log.log",
         "./dat/250511_250201_CELEBI/karol_250201_2025-05-11_09_56_28_log.log",
         "./dat/250508_250313_CELEBI/karol_250313_2025-05-08_10_36_28_log.log",
-        "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_log.log",]
+        "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_log.log",
+        "./dat/250515_241226_CELEBI/karol_241226_ult_2025-05-15_13_41_42_log.log",
+        "./dat/250522_241027_CELEBI/karol_241027_ult_2025-05-22_10_05_56_log.log"]
 
     for html_file_path, log_file in zip(html_file_paths, log_files):
         print(f"Loading files: {html_file_path} and {log_file}")

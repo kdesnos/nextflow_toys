@@ -144,6 +144,31 @@ class TestPipelineParamValuesTableManager(unittest.TestCase):
         self.assertEqual(all_values[1].paramId, self.param2.paramId)
         self.assertEqual(all_values[1].value, "[1, 2, 3]")
 
+    def test_getParamValuesForTraces(self):
+        # Add pipeline parameter values
+        value_entry1 = PipelineParamValueEntry(
+            paramId=self.param1.paramId,
+            tId=self.trace_entry1.tId,
+            value="value1"
+        )
+        value_entry2 = PipelineParamValueEntry(
+            paramId=self.param2.paramId,
+            tId=self.trace_entry1.tId,
+            value="42"
+        )
+        self.param_values_manager.addPipelineParamValue(value_entry1)
+        self.param_values_manager.addPipelineParamValue(value_entry2)
+
+        # Retrieve parameter values for the trace
+        param_values = self.param_values_manager.getParamValuesForTraces([self.trace_entry1.name])
+        self.assertIn(self.trace_entry1.name, param_values)
+        self.assertEqual(param_values[self.trace_entry1.name]["param1"], "value1")
+        self.assertEqual(param_values[self.trace_entry1.name]["param2"], 42)
+
+        # Test with a non-existent trace
+        param_values_empty = self.param_values_manager.getParamValuesForTraces(["non_existent_trace"])
+        self.assertEqual(param_values_empty, {})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -49,7 +49,7 @@ class PipelineParamValuesTableManager:
                 raise Exception(f"Pipeline parameter '{row['param_name']}' not found in the PipelineParams table.")
 
             # Use the reformatted value if available, otherwise use the original value
-            value = row["reformatted_value"] 
+            value = row["reformatted_value"]
 
             # Add each value to the PipelineParamValues table
             value_entry = PipelineParamValueEntry(
@@ -98,6 +98,62 @@ class PipelineParamValuesTableManager:
 
         # Check if any rows were affected
         return cursor.rowcount > 0
+
+    def getParamValuesForTraces(self, trace_names=None):
+        """
+        Get parameter values for specific trace names from the pipeline_param_values table.
+
+        :param trace_names: List of trace names or a single trace name to filter the results. If None, fetch for all traces.
+        :return: A dictionary mapping trace names to their parameter dictionaries. Each parameter dictionary contains
+                 parameter names as keys and their corresponding values, converted to appropriate types.
+        """
+        import pandas as pd
+
+        if isinstance(trace_names, str):
+            trace_names = [trace_names]
+
+        params_by_trace = {}
+        query = """
+            SELECT
+                pp.name,
+                ppv.value,
+                pp.type,
+                t.name AS trace_name
+            FROM
+                PipelineParamValues ppv
+            JOIN
+                PipelineParams pp ON ppv.paramId = pp.paramId
+            JOIN
+                Traces t ON ppv.tId = t.tId
+        """
+        params = []
+
+        if trace_names:
+            query += " WHERE t.name IN ({})".format(",".join("?" for _ in trace_names))
+            params.extend(trace_names)
+
+        cursor = self.connection.cursor()
+        cursor.execute(query, params)
+        param_data = cursor.fetchall()
+
+        if param_data:
+            df = pd.DataFrame(param_data, columns=["param_name", "value", "type", "trace_name"])
+            for trace_name, group in df.groupby("trace_name"):
+                params_dict = {}
+                for _, row in group.iterrows():
+                    if row["type"] == "Boolean":
+                        params_dict[row["param_name"]] = 1 if row["value"] == "True" else 0
+                    elif row["type"] == "Integer":
+                        params_dict[row["param_name"]] = int(row["value"])
+                    elif row["type"] == "Real":
+                        params_dict[row["param_name"]] = float(row["value"])
+                    else:
+                        params_dict[row["param_name"]] = row["value"]
+                params_by_trace[trace_name] = params_dict
+        else:
+            print("No parameter values found for the specified traces.")
+
+        return params_by_trace
 
 
 class PipelineParamValueEntry:
