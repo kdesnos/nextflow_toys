@@ -374,13 +374,14 @@ def identify_variable_pipeline_numerical_parameters(db_manager, trace_names=None
     return df
 
 
-def get_execution_times_distribution_charasteristics(db_manager, process_name, is_resolved_name=False):
+def get_execution_times_distribution_charasteristics(db_manager, process_name, is_resolved_name=False, trace_names=None):
     """
     Get the distribution characteristics of execution times for a given process.
 
     :param db_manager: An instance of NextflowTraceDBManager.
     :param process_name: The name of the process or resolved process to analyze.
     :param is_resolved_name: If True, treat process_name as a resolved process name.
+    :param trace_names: A list of trace names to filter the analysis. If None, all traces are included.
     :return: A Pandas DataFrame with distribution characteristics.
     """
     # SQL query to get the execution times for the specified process
@@ -390,10 +391,18 @@ def get_execution_times_distribution_charasteristics(db_manager, process_name, i
         JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
         JOIN Processes p ON rpn.pId = p.pId
         JOIN Traces t ON pe.tId = t.tId
-        WHERE {"p" if not is_resolved_name else "rpn"}.name = ?;
+        WHERE {"p" if not is_resolved_name else "rpn"}.name = ?
     """
+    params = [process_name]
+
+    # Add filtering for trace names if provided
+    if trace_names:
+        placeholders = ",".join("?" for _ in trace_names)
+        query += f" AND t.name IN ({placeholders})"
+        params.extend(trace_names)
+
     cursor = db_manager.connection.cursor()
-    cursor.execute(query, (process_name,))
+    cursor.execute(query, params)
     execution_data = cursor.fetchall()
 
     # Convert execution data to a DataFrame
@@ -513,7 +522,8 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
     return correlation_df
 
 
-def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_threshold=15000, is_resolved_name=False, print_info=False, trace_names=None):
+def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_threshold=15000,
+                                      is_resolved_name=False, print_info=False, trace_names=None):
     """
     Extract an expression for predicting execution time as a function of the best parameters.
 
@@ -648,7 +658,7 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
     }
 
 
-def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tolerance=0.1):
+def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tolerance=0.1, trace_names=None):
     """
     For each process in the Processes table, performs a two-way ANOVA on execution times,
     with factors: run (trace_name) and resolved process name (resolved_name).
@@ -657,6 +667,7 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
     :param db_manager: An instance of NextflowTraceDBManager.
     :param effect_threshold_ms: The threshold in milliseconds for considering an effect significant.
     :param tolerance: The threshold for coefficient of variation for the fallback test (default: 0.1).
+    :param trace_names: A list of trace names to filter the analysis. If None, all traces are included.
     :return: A Pandas DataFrame with results for each process.
     """
     processes = db_manager.process_manager.getAllProcesses()
@@ -670,8 +681,16 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
             JOIN Traces t ON pe.tId = t.tId
             WHERE rpn.pId = ?
         """
+        params = [process.pId]
+
+        # Add filtering for trace names if provided
+        if trace_names:
+            placeholders = ",".join("?" for _ in trace_names)
+            query += f" AND t.name IN ({placeholders})"
+            params.extend(trace_names)
+
         cursor = db_manager.connection.cursor()
-        cursor.execute(query, (process.pId,))
+        cursor.execute(query, params)
         rows = cursor.fetchall()
         if not rows:
             continue
@@ -686,8 +705,7 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
 
         # Compute effect sizes
         trace_effect = df.groupby("trace_name")["time"].mean().max() - df.groupby("trace_name")["time"].mean().min() if n_traces > 1 else None
-        resolved_effect = df.groupby("resolved_name")["time"].mean().max(
-        ) - df.groupby("resolved_name")["time"].mean().min() if n_resolved > 1 else None
+        resolved_effect = df.groupby("resolved_name")["time"].mean().max() - df.groupby("resolved_name")["time"].mean().min() if n_resolved > 1 else None
 
         if enough_per_trace and enough_per_resolved and n_traces > 1 and n_resolved > 1:
             # Two-way ANOVA
@@ -773,6 +791,89 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
             })
 
     return pd.DataFrame(results)
+
+
+def build_execution_predictors(db_manager, trace_names=None):
+    """
+    Build execution predictors based on ANOVA analysis and linear regression models.
+
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param trace_names: A list of trace names to filter the analysis. If None, all traces are included.
+    :return: A tuple of two DataFrames: stats_based_config and model_based_config.
+    """
+    # Step 1: Perform ANOVA analysis
+    anova_results = anova_on_process_execution_times(db_manager, trace_names=trace_names)
+
+    print("\n## ANOVA results:")
+    print(anova_results)
+
+    stats_based_config = []
+    model_based_config = []
+
+    # Step 2.1: For processes and resolved processes with non-impactful traces, extract statistical information
+    for _, row in anova_results.iterrows():
+        if not row['trace_significant'] and not row['resolved_significant']:
+            # Per process stats
+            process_stats = get_execution_times_distribution_charasteristics(
+                db_manager, row['process_name'], trace_names=trace_names
+            )
+            stats_based_config.append({
+                'process_name': row['process_name'],
+                'mean_time': process_stats['mean_time'].iloc[0],
+                'std_dev_time': process_stats['std_dev_time'].iloc[0],
+                'min_time': process_stats['min_time'].iloc[0],
+                'max_time': process_stats['max_time'].iloc[0],
+                'trace_significant': row['trace_significant'],
+                'resolved_significant': row['resolved_significant']
+            })
+        elif not row['trace_significant'] and row['resolved_significant']:
+            # Per resolved process stats
+            rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(row['process_name'])
+            for rp in rp_list:
+                process_stats = get_execution_times_distribution_charasteristics(
+                    db_manager, rp.name, is_resolved_name=True, trace_names=trace_names
+                )
+                stats_based_config.append({
+                    'process_name': rp.name,
+                    'mean_time': process_stats['mean_time'].iloc[0],
+                    'std_dev_time': process_stats['std_dev_time'].iloc[0],
+                    'min_time': process_stats['min_time'].iloc[0],
+                    'max_time': process_stats['max_time'].iloc[0],
+                    'trace_significant': row['trace_significant'],
+                    'resolved_significant': row['resolved_significant']
+                })
+
+        # Step 2.2: For processes and resolved processes with impactful traces, parameter-dependent prediction
+        elif row['trace_significant'] and not row['resolved_significant']:
+            # Per process prediction
+            model = extract_execution_time_linear_reg(
+                db_manager, process_name=row['process_name'], is_resolved_name=False, trace_names=trace_names
+            )
+            model_based_config.append({
+                'process_name': row['process_name'],
+                'model': model,
+                'trace_significant': row['trace_significant'],
+                'resolved_significant': row['resolved_significant']
+            })
+        else:  # row['trace_significant'] and row['resolved_significant']:
+            # Per resolved process prediction
+            rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(row['process_name'])
+            for rp in rp_list:
+                model = extract_execution_time_linear_reg(
+                    db_manager, process_name=rp.name, is_resolved_name=True, trace_names=trace_names
+                )
+                model_based_config.append({
+                    'process_name': rp.name,
+                    'model': model,
+                    'trace_significant': row['trace_significant'],
+                    'resolved_significant': row['resolved_significant']
+                })
+
+    # Convert the collected stats into DataFrames
+    stats_based_config = pd.DataFrame(stats_based_config)
+    model_based_config = pd.DataFrame(model_based_config)
+
+    return stats_based_config, model_based_config
 
 
 if __name__ == "__main__":

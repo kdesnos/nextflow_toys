@@ -4,7 +4,7 @@ import pandas as pd
 import datetime
 
 from nf_trace_db_manager import NextflowTraceDBManager
-from nf_trace_db_analyzer import analyze_process_execution_correlation, anova_on_process_execution_times, extract_execution_time_linear_reg, get_execution_times_distribution_charasteristics
+from nf_trace_db_analyzer import analyze_process_execution_correlation, anova_on_process_execution_times, build_execution_predictors, extract_execution_time_linear_reg, get_execution_times_distribution_charasteristics
 
 
 def generate_nextflow_config_from_trace(trace_df, output_config_file):
@@ -82,68 +82,18 @@ def generate_nextflow_config_from_trace(trace_df, output_config_file):
 def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_config_file: Path):
     """
     Generate a Nextflow configuration file based on linear regression models and statistical analysis.
-    """
 
+    This function builds execution predictors using statistical analysis and linear regression models.
+    It then generates a Nextflow configuration file with time and memory constraints for each process.
+
+    :param db_manager: An instance of NextflowTraceDBManager to interact with the database.
+    :param output_config_file: A Path object specifying the output file for the generated configuration.
+    :return: None. Writes the configuration to the specified file.
+    """
     max_nb_retries = 3
 
-    # Step 1: Perform ANOVA analysis
-    anova_results = anova_on_process_execution_times(db_manager)
-
-    print("\n## ANOVA results:")
-    print(anova_results)
-
-    stats_based_config = []
-    model_based_config = []
-
-    # Step 2.1: For processes and resolved processes with non-impactful traces, extract statistical information
-    for _, row in anova_results.iterrows():
-        if not row['trace_significant'] and not row['resolved_significant']:
-
-            # Per process stats
-            process_stats = get_execution_times_distribution_charasteristics(db_manager, row['process_name'])
-            stats_based_config.append({
-                'process_name': row['process_name'],
-                'mean_time': process_stats['mean_time'].iloc[0],
-                'std_dev_time': process_stats['std_dev_time'].iloc[0],
-                'min_time': process_stats['min_time'].iloc[0],
-                'max_time': process_stats['max_time'].iloc[0]
-            })
-        elif not row['trace_significant'] and row['resolved_significant']:
-            # Per resolved process stats
-            # Find process names
-            rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(row['process_name'])
-            for rp in rp_list:
-                process_stats = get_execution_times_distribution_charasteristics(db_manager, rp.name, is_resolved_name=True)
-                stats_based_config.append({
-                    'process_name': rp.name,
-                    'mean_time': process_stats['mean_time'].iloc[0],
-                    'std_dev_time': process_stats['std_dev_time'].iloc[0],
-                    'min_time': process_stats['min_time'].iloc[0],
-                    'max_time': process_stats['max_time'].iloc[0]
-                })
-
-        # Step 2.2: For processes and resolved processes with impactful traces, parameter-dependent prediction
-        elif row['trace_significant'] and not row['resolved_significant']:
-            # Per process prediction
-            model = extract_execution_time_linear_reg(db_manager, process_name=row['process_name'], is_resolved_name=False)
-            model_based_config.append({
-                'process_name': row['process_name'],
-                'model': model
-            })
-        else:  # row['trace_significant'] and row['resolved_significant']:
-            # Per resolved process prediction
-            rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(row['process_name'])
-            for rp in rp_list:
-                # Find process names
-                model = extract_execution_time_linear_reg(db_manager, process_name=rp.name, is_resolved_name=True)
-                model_based_config.append({
-                    'process_name': rp.name,
-                    'model': model
-                })
-
-    # Convert the collected stats into a pandas DataFrame
-    stats_based_config = pd.DataFrame(stats_based_config)
-    model_based_config = pd.DataFrame(model_based_config)
+    # Build execution predictors
+    stats_based_config, model_based_config = build_execution_predictors(db_manager)
 
     # Step 3: Generate the Nextflow configuration file
     with open(output_config_file, 'w') as file:
@@ -181,10 +131,9 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
             rmse = row['model']['rmse']
 
             # Generate the expression for the linear regression model
-            # Divide by 1000.0 to convert to seconds
             expression = f"{(model.intercept_):.0f} + " + " + ".join(
                 [f"({coef:.0f} * {f'params.{p}' if not params[p]['type'] == 'Boolean' else f'(params.{p} ? 1.0 : 0.0)'} )" for coef,
-                    p in zip(model.coef_, params.keys())]  # converted in seconds
+                    p in zip(model.coef_, params.keys())]
             )
 
             # Add RMSE to the expression
@@ -200,6 +149,59 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
         # Footer for the process block
         file.write("}\n")
 
+def generate_markdown_summary(db_manager, output_markdown_file):
+    """
+    Generate a markdown file summarizing the predictors obtained from build_execution_predictors.
+
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param output_markdown_file: Path to the output markdown file.
+    :return: None. Writes the summary to the specified markdown file.
+    """
+    # Build execution predictors
+    stats_based_config, model_based_config = build_execution_predictors(db_manager)
+
+    # Prepare the markdown content
+    markdown_lines = [
+        "# Execution Predictors Summary",
+        "",
+        "| Process Name | Predictor Type | Per Trace | Per Resolved | Parameters | RMSE/Std Dev | Prediction Expression |",
+        "|--------------|----------------|-----------|--------------|------------|-------------:|------------------------|"
+    ]
+
+    # Add rows for stats-based predictors
+    for _, row in stats_based_config.iterrows():
+        process_name = row["process_name"]
+        predictor_type = "std dev"
+        per_trace = row["trace_significant"]  # Use trace_significant for per_trace
+        per_resolved = row["resolved_significant"]  # Use resolved_significant for per_resolved
+        parameters = "N/A"
+        std_dev = f"{row['std_dev_time'] / 1000.0:.2f}"  # Convert to seconds
+        expression = f"{row['mean_time'] / 1000.0:.2f}"
+
+        markdown_lines.append(
+            f"| {process_name} | {predictor_type} | {per_trace} | {per_resolved} | {parameters} | {std_dev} | `{expression}` |"
+        )
+
+    # Add rows for model-based predictors
+    for _, row in model_based_config.iterrows():
+        process_name = row["process_name"]
+        predictor_type = "linear reg"
+        per_trace = row["trace_significant"]  # Use trace_significant for per_trace
+        per_resolved = row["resolved_significant"]  # Use resolved_significant for per_resolved
+        model = row["model"]
+        parameters = ", ".join(model["selected_parameters"].keys())
+        rmse = f"{model['rmse'] / 1000.0:.2f}"  # Convert to seconds
+        expression = model["expression"]
+
+        markdown_lines.append(
+            f"| {process_name} | {predictor_type} | {per_trace} | {per_resolved} | {parameters} | {rmse} | `{expression}` |"
+        )
+
+    # Write the markdown content to the file
+    with open(output_markdown_file, "w") as file:
+        file.write("\n".join(markdown_lines))
+
+    print(f"Markdown summary written to {output_markdown_file}")
 
 if __name__ == "__main__":
     # Example usage
@@ -207,4 +209,5 @@ if __name__ == "__main__":
     db_manager.connect()
     output_config_file = Path("./dat/celebi_from_db.config")
 
+    generate_markdown_summary(db_manager, "./dat/celebi_predictors_summary.md")
     generate_nextflow_config_from_db(db_manager, output_config_file)
