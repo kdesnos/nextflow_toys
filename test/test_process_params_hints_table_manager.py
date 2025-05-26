@@ -82,6 +82,35 @@ class TestProcessParamsHintsTableManager(unittest.TestCase):
         result = self.hints_manager.removeProcessParamHint(999, 999)
         self.assertFalse(result)
 
+    def test_removeAllProcessParamHints(self):
+        # Add multiple process parameter hints
+        hint_entries = [
+            ProcessParamHintEntry(pId=self.process_entry.pId, paramId=self.pipeline_param_entry1.paramId),
+            ProcessParamHintEntry(pId=self.process_entry.pId, paramId=self.pipeline_param_entry2.paramId),
+        ]
+        self.hints_manager.addAllProcessParamHints(hint_entries)
+
+        # Remove all hints
+        self.hints_manager.removeAllProcessParamHints()
+
+        # Verify all hints were removed
+        hints = self.hints_manager.getAllProcessParamHints()
+        self.assertEqual(len(hints), 0)
+
+    def test_getHintedParamNamesByProcessName(self):
+        # Add multiple process parameter hints
+        hint_entries = [
+            ProcessParamHintEntry(pId=self.process_entry.pId, paramId=self.pipeline_param_entry1.paramId),
+            ProcessParamHintEntry(pId=self.process_entry.pId, paramId=self.pipeline_param_entry2.paramId),
+        ]
+        self.hints_manager.addAllProcessParamHints(hint_entries)
+
+        # Retrieve hinted parameter names for the process
+        hinted_params = self.hints_manager.getHintedParamNamesByProcessName(self.process_entry.name)
+        self.assertEqual(len(hinted_params), 2)
+        self.assertIn("param1", hinted_params)
+        self.assertIn("param2", hinted_params)
+
     @patch("os.path.isfile")
     @patch("process_params_hints_table_manager.extract_process_parameters_hints")
     def test_addProcessParamHintsFromCode(self, mock_extract_hints, mock_isfile):

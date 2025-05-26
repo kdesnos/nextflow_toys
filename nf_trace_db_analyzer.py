@@ -558,11 +558,18 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
     # Step 4: Merge execution times with varying parameter values
     merged_df = execution_df.merge(param_df, on="trace_name", how="inner")
 
-    # Step 5: Prepare data for regression
-    y = merged_df["execution_time"].values
-    available_params = list(param_df.columns)
-    available_params.remove("trace_name")
+    # Step 5: Filter parameters based on hints from ProcessParamsHintsTableManager
+    hinted_params = db_manager.process_params_hints_manager.getHintedParamNamesByProcessName(
+        process_name, is_resolved_name=is_resolved_name
+    )
+    if hinted_params:
+        available_params = [param for param in param_df.columns if param in hinted_params]
+    else:
+        available_params = list(param_df.columns)
+        available_params.remove("trace_name")
 
+    # Step 6: Prepare data for regression
+    y = merged_df["execution_time"].values
     selected_params = []
     selected_params_info = {}  # Dictionary to store parameter info (name and type)
     all_expressions = []  # Store all expressions created during iterations
@@ -571,7 +578,7 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
     expression = ""
     model = None
 
-    # Step 6: Iteratively add parameters to the model
+    # Step 7: Iteratively add parameters to the model
     for _ in range(top_n):
         best_param = None
         best_rmse = float(2**31 - 1)

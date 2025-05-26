@@ -1,6 +1,7 @@
 import os
 from extract_from_process import extract_process_parameters_hints
 
+
 class ProcessParamsHintsTableManager:
     def __init__(self, connection):
         """
@@ -55,6 +56,26 @@ class ProcessParamsHintsTableManager:
 
         return [ProcessParamHintEntry(pId=row[0], paramId=row[1]) for row in rows]
 
+    def getHintedParamNamesByProcessName(self, process_name, is_resolved_name=False):
+        """
+        Get the list of hinted parameter names for a process with a given name.
+        :param process_name: The name of the process.
+        :param is_resolved_name: If True, return only resolved parameter names.
+        :return: A list of parameter names.
+        """
+        cursor = self.connection.cursor()
+        query = f"""
+           SELECT pp.name
+           FROM ProcessParamHints pph
+           JOIN Processes p ON pph.pId = p.pId
+           JOIN PipelineParams pp ON pph.paramId = pp.paramId
+           {"JOIN ResolvedProcessNames rpn ON p.pId = rpn.pId" if is_resolved_name else ""}
+           WHERE {"p" if not is_resolved_name else "rpn"}.name = ?;
+       """
+        cursor.execute(query, (process_name,))
+        rows = cursor.fetchall()
+        return [row[0] for row in rows]
+
     def removeProcessParamHint(self, process_id, param_id):
         """
         Remove a process parameter hint entry from the database by its process ID and parameter ID.
@@ -69,15 +90,28 @@ class ProcessParamsHintsTableManager:
 
         # Check if any rows were affected
         return cursor.rowcount > 0
-    
+
+    def removeAllProcessParamHints(self):
+        """
+        Remove all entries from the ProcessParamHints table.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("DELETE FROM ProcessParamHints;")
+        self.connection.commit()
+
     def addProcessParamHintsFromCode(self, db_manager, root_folder=None, prefix=None):
         """
         Extract process parameter hints from Nextflow files and store them in the ProcessParamsHints table.
+
+        Prior to running, previous values in the ProcessParamsHints table will be cleared.
 
         :param db_manager: An instance of NextflowTraceDBManager.
         :param root_folder: (Optional) A path to a root folder where process files are located.
         :param prefix: (Optional) A prefix path to replace with the root folder.
         """
+        # Clear existing entries in the ProcessParamsHints table
+        self.removeAllProcessParamHints()
+
         # Retrieve all process entries from the Processes table
         processes = db_manager.process_manager.getAllProcesses()
 

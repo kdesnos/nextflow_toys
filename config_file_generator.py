@@ -149,6 +149,7 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
         # Footer for the process block
         file.write("}\n")
 
+
 def generate_markdown_summary(db_manager, output_markdown_file):
     """
     Generate a markdown file summarizing the predictors obtained from build_execution_predictors.
@@ -164,8 +165,8 @@ def generate_markdown_summary(db_manager, output_markdown_file):
     markdown_lines = [
         "# Execution Predictors Summary",
         "",
-        "| Process Name | Predictor Type | Per Trace | Per Resolved | Parameters | RMSE/Std Dev | Prediction Expression |",
-        "|--------------|----------------|-----------|--------------|------------|-------------:|------------------------|"
+        "| Process Name | Predictor Type | Per Trace | Per Resolved | Parameters | RMSE/Std Dev | Prediction Expression | Hinted Params |",
+        "|--------------|----------------|-----------|--------------|------------|-------------:|------------------------|----------------|"
     ]
 
     # Add rows for stats-based predictors
@@ -178,8 +179,13 @@ def generate_markdown_summary(db_manager, output_markdown_file):
         std_dev = f"{row['std_dev_time'] / 1000.0:.2f}"  # Convert to seconds
         expression = f"{row['mean_time'] / 1000.0:.2f}"
 
+        # Get hinted parameters for the process
+        hinted_params = db_manager.process_params_hints_manager.getHintedParamNamesByProcessName(
+            process_name, is_resolved_name=row["resolved_significant"])
+        hinted_params_str = ", ".join(hinted_params) if hinted_params else "None"
+
         markdown_lines.append(
-            f"| {process_name} | {predictor_type} | {per_trace} | {per_resolved} | {parameters} | {std_dev} | `{expression}` |"
+            f"| {process_name} | {predictor_type} | {per_trace} | {per_resolved} | {parameters} | {std_dev} | `{expression}` | {hinted_params_str} |"
         )
 
     # Add rows for model-based predictors
@@ -193,8 +199,13 @@ def generate_markdown_summary(db_manager, output_markdown_file):
         rmse = f"{model['rmse'] / 1000.0:.2f}"  # Convert to seconds
         expression = model["expression"]
 
+        # Get hinted parameters for the process
+        hinted_params = db_manager.process_params_hints_manager.getHintedParamNamesByProcessName(
+            process_name, is_resolved_name=row["resolved_significant"])
+        hinted_params_str = ", ".join(hinted_params) if hinted_params else "None"
+
         markdown_lines.append(
-            f"| {process_name} | {predictor_type} | {per_trace} | {per_resolved} | {parameters} | {rmse} | `{expression}` |"
+            f"| {process_name} | {predictor_type} | {per_trace} | {per_resolved} | {parameters} | {rmse} | `{expression}` | {hinted_params_str} |"
         )
 
     # Write the markdown content to the file
@@ -202,6 +213,7 @@ def generate_markdown_summary(db_manager, output_markdown_file):
         file.write("\n".join(markdown_lines))
 
     print(f"Markdown summary written to {output_markdown_file}")
+
 
 if __name__ == "__main__":
     # Example usage
