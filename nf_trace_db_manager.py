@@ -8,6 +8,7 @@ from resolved_process_names_table_manager import ResolvedProcessNamesTableManage
 from process_executions_table_manager import ProcessExecutionTableManager
 from pipeline_params_table_manager import PipelineParamsTableManager
 from pipeline_param_values_table_manager import PipelineParamValuesTableManager
+from process_params_hints_table_manager import ProcessParamsHintsTableManager
 
 
 class NextflowTraceDBManager:
@@ -26,7 +27,8 @@ class NextflowTraceDBManager:
         self.process_inputs_manager = None
         self.process_exec_params_manager = None
         self.pipeline_params_manager = None
-        self.pipeline_param_values_manager = None  # Add PipelineParamValuesTableManager attribute
+        self.pipeline_param_values_manager = None
+        self.process_params_hints_manager = None  # Add ProcessParamsHintsTableManager attribute
 
     def connect(self):
         """
@@ -43,7 +45,8 @@ class NextflowTraceDBManager:
             self.process_inputs_manager = ProcessInputsTableManager(self.connection)
             self.process_exec_params_manager = ProcessExecParamsTableManager(self.connection)
             self.pipeline_params_manager = PipelineParamsTableManager(self.connection)
-            self.pipeline_param_values_manager = PipelineParamValuesTableManager(self.connection)  # Initialize PipelineParamValuesTableManager
+            self.pipeline_param_values_manager = PipelineParamValuesTableManager(self.connection)
+            self.process_params_hints_manager = ProcessParamsHintsTableManager(self.connection)  # Initialize ProcessParamsHintsTableManager
 
     def isConnected(self):
         """
@@ -188,11 +191,22 @@ class NextflowTraceDBManager:
         """
         self.pipeline_param_values_manager.addPipelineParamValuesFromLog(self, log_file_path)
 
+    def addProcessParamHintsFromCode(self, root_folder=None, prefix=None):
+        """
+        Extract process parameter hints from Nextflow files and store them in the ProcessParamsHints table.
+
+        :param root_folder: (Optional) A path to a root folder where process files are located.
+        :param prefix: (Optional) A prefix path to replace with the root folder.
+        """
+        self.process_params_hints_manager.addProcessParamHintsFromCode(self, root_folder=root_folder, prefix=prefix)
+
     def addAllFromFiles(self, html_file_path, log_file_path):
         """
         Add all relevant data to the database from the given HTML and log files.
 
         Adds are skipped if the corresponding TableManager is set to None or if its dependencies are not initialized.
+
+        The ProcessParamsHintsTableManager is not included in this method as it is not directly related to the HTML or log files.
 
         Dependencies:
         - Metadata addition requires TraceTableManager.
@@ -317,6 +331,11 @@ class NextflowTraceDBManager:
             pipeline_param_value_count = len(self.pipeline_param_values_manager.getAllPipelineParamValues())
             print(f"Number of pipeline parameter values: {pipeline_param_value_count}")
 
+        # Retrieve and print the number of process parameter hints
+        if self.process_params_hints_manager is not None:
+            process_param_hint_count = len(self.process_params_hints_manager.getAllProcessParamHints())
+            print(f"Number of process parameter hints: {process_param_hint_count}")
+
 
 # Main prog
 if __name__ == "__main__":
@@ -342,7 +361,7 @@ if __name__ == "__main__":
         "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_report.html",
         "./dat/250515_241226_CELEBI/karol_241226_ult_2025-05-15_13_41_42_report.html",
         "./dat/250522_241027_CELEBI/karol_241027_ult_2025-05-22_10_05_56_report.html"
-        ]
+    ]
 
     # Add process definitions
     log_files = [
@@ -356,6 +375,12 @@ if __name__ == "__main__":
     for html_file_path, log_file in zip(html_file_paths, log_files):
         print(f"Loading files: {html_file_path} and {log_file}")
         db_manager.addAllFromFiles(html_file_path, log_file)
+
+    # Add process parameter hints from code files
+    db_manager.addProcessParamHintsFromCode(
+        root_folder="C:/Git/",
+        prefix="/fred/oz313/src/users/kdesnos/"
+    )
 
     # Print database information
     db_manager.printDBInfo()

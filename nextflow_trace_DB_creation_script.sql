@@ -79,3 +79,12 @@ CREATE TABLE IF NOT EXISTS PipelineParamValues (
 
 	Constraint PK_PipelineParamValues Primary Key (paramId, tId)
 );
+
+-- ProcessParamHints table contains the name of params for which the user suggested
+-- an influence on a given process execution time.
+CREATE TABLE IF NOT EXISTS ProcessParamHints (
+	pId INTEGER REFERENCES Processes (pId) ON DELETE CASCADE,
+	paramId INTEGER REFERENCES PipelineParams (paramId) ON DELETE CASCADE,
+
+	CONSTRAINT PK_ProcessParamHints Primary Key (pId, paramId)
+);
