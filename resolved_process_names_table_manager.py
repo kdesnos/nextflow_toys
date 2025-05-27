@@ -1,4 +1,5 @@
 from extract_from_nf_log import extractResolvedProcessNames
+from processes_table_manager import ProcessEntry
 
 
 class ResolvedProcessNamesTableManager:
@@ -112,6 +113,27 @@ class ResolvedProcessNamesTableManager:
 
         # Check if any rows were affected
         return cursor.rowcount > 0
+
+    def getProcessByResolvedName(self, resolved_name):
+        """
+        Retrieve the process entry corresponding to a given resolved process name.
+
+        :param resolved_name: The resolved process name to search for.
+        :return: A ProcessEntry instance if found, None otherwise.
+        """
+        cursor = self.connection.cursor()
+        query = """
+            SELECT p.pId, p.name, p.path
+            FROM Processes p
+            JOIN ResolvedProcessNames rpn ON p.pId = rpn.pId
+            WHERE rpn.name = ?;
+        """
+        cursor.execute(query, (resolved_name,))
+        row = cursor.fetchone()
+
+        if row:
+            return ProcessEntry(pId=row[0], name=row[1], path=row[2])
+        return None
 
 
 class ResolvedProcessEntry:

@@ -712,7 +712,8 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
 
         # Compute effect sizes
         trace_effect = df.groupby("trace_name")["time"].mean().max() - df.groupby("trace_name")["time"].mean().min() if n_traces > 1 else None
-        resolved_effect = df.groupby("resolved_name")["time"].mean().max() - df.groupby("resolved_name")["time"].mean().min() if n_resolved > 1 else None
+        resolved_effect = df.groupby("resolved_name")["time"].mean().max(
+        ) - df.groupby("resolved_name")["time"].mean().min() if n_resolved > 1 else None
 
         if enough_per_trace and enough_per_resolved and n_traces > 1 and n_resolved > 1:
             # Two-way ANOVA
@@ -810,9 +811,6 @@ def build_execution_predictors(db_manager, trace_names=None):
     """
     # Step 1: Perform ANOVA analysis
     anova_results = anova_on_process_execution_times(db_manager, trace_names=trace_names)
-
-    print("\n## ANOVA results:")
-    print(anova_results)
 
     stats_based_config = []
     model_based_config = []

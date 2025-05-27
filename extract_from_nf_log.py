@@ -1,5 +1,6 @@
 import pandas as pd
 import re
+from datetime import datetime, timedelta
 
 
 def extractProcessDefinitions(file_path):
@@ -169,6 +170,7 @@ def extractProcessInputs(file_path):
     return df
 
 
+
 def extractExecutionParameters(file_path):
     """
     Extracts execution parameters from a Nextflow log file and returns a pandas DataFrame.
@@ -319,6 +321,7 @@ def extractPipelineParameters(file_path):
 
             if inside_params_section:
                 if stripped_line == "}":
+                    inside_params_section = False
                     break
 
                 # Parse parameter line
@@ -332,6 +335,84 @@ def extractPipelineParameters(file_path):
                         "reformatted_value": reformatted_value
                     })
 
-    # Convert the parameters into a pandas DataFrame
-    df = pd.DataFrame(parameters)
-    return df
+    # Only return the results if the param section was properly closed.
+    if not inside_params_section and len(parameters) > 0:
+        # Convert the parameters into a pandas DataFrame
+        df = pd.DataFrame(parameters)
+        return df
+    else:
+        return None
+
+
+def extract_task_info_from_lines(lines):
+    """
+    Extracts process names from a set of log lines.
+
+    :param lines: List of log lines to process.
+    :type lines: list of str
+    :return: A list of process names found in the log lines.
+    :rtype: list of str
+    """
+    process_names = []
+    # Define the regex pattern to match the log line
+    pattern = re.compile(
+        r"DEBUG n\.processor\.TaskPollingMonitor - Task completed > TaskHandler\[(jobId: \d+; )?id: \d+; name: (?P<process_name>[^;]+?)( \(\d*\))?; status: COMPLETED; exit: 0;"
+    )
+
+    for line in lines:
+        match = pattern.search(line)
+        if match:
+            process_name = match.group("process_name")
+            process_names.append(process_name)
+
+    return process_names
+
+
+def extract_task_info_from_log_file(file_path):
+    """
+    Reads a log file and extracts process names.
+
+    :param file_path: The path to the log file.
+    :type file_path: str
+    :return: A list of process names found in the log file.
+    :rtype: list of str
+    """
+    with open(file_path, "r", encoding="utf-8") as file:
+        lines = file.readlines()
+    return extract_task_info_from_lines(lines)
+
+
+def extract_trace_file_path_from_lines(lines):
+    """
+    Extracts the path to the trace file from a set of log lines.
+
+    :param lines: List of log lines to process.
+    :type lines: list of str
+    :return: The path to the trace file if found, otherwise None.
+    :rtype: str or None
+    """
+    # Define the regex pattern to match the trace file path
+    pattern = re.compile(
+        r"DEBUG nextflow\.trace\.TraceFileObserver - Workflow started -- trace file: (?P<trace_file_path>.+)"
+    )
+
+    for line in lines:
+        match = pattern.search(line)
+        if match:
+            return match.group("trace_file_path")
+
+    return None
+
+
+def extract_trace_file_path_from_log_file(file_path):
+    """
+    Reads a log file and extracts the path to the trace file.
+
+    :param file_path: The path to the log file.
+    :type file_path: str
+    :return: The path to the trace file if found, otherwise None.
+    :rtype: str or None
+    """
+    with open(file_path, "r", encoding="utf-8") as file:
+        lines = file.readlines()
+    return extract_trace_file_path_from_lines(lines)
