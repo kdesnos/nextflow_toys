@@ -367,21 +367,6 @@ def extract_task_info_from_lines(lines):
 
     return process_names
 
-
-def extract_task_info_from_log_file(file_path):
-    """
-    Reads a log file and extracts process names.
-
-    :param file_path: The path to the log file.
-    :type file_path: str
-    :return: A list of process names found in the log file.
-    :rtype: list of str
-    """
-    with open(file_path, "r", encoding="utf-8") as file:
-        lines = file.readlines()
-    return extract_task_info_from_lines(lines)
-
-
 def extract_trace_file_path_from_lines(lines):
     """
     Extracts the path to the trace file from a set of log lines.
@@ -403,16 +388,24 @@ def extract_trace_file_path_from_lines(lines):
 
     return None
 
-
-def extract_trace_file_path_from_log_file(file_path):
+def contains_execution_complete_message(lines):
     """
-    Reads a log file and extracts the path to the trace file.
+    Checks if any line in the parsed log lines contains the message:
+    "DEBUG nextflow.script.ScriptRunner - > Execution complete -- Goodbye".
 
-    :param file_path: The path to the log file.
-    :type file_path: str
-    :return: The path to the trace file if found, otherwise None.
-    :rtype: str or None
+    :param lines: List of log lines to process.
+    :type lines: list of str
+    :return: True if the message is found, otherwise False.
+    :rtype: bool
     """
-    with open(file_path, "r", encoding="utf-8") as file:
-        lines = file.readlines()
-    return extract_trace_file_path_from_lines(lines)
+    # Define the regex pattern to match the specific log message
+    pattern = re.compile(
+        r"DEBUG nextflow\.script\.ScriptRunner - > Execution complete -- Goodbye"
+    )
+
+    # Check each line for the pattern
+    for line in lines:
+        if pattern.search(line):
+            return True
+
+    return False
