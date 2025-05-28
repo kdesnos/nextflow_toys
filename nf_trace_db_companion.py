@@ -14,7 +14,7 @@ from extract_trace_from_html import extract_trace_data
 
 
 class NextflowTraceDBCompanion(FileSystemEventHandler):
-    def __init__(self, stub_report_path, stub_dag_path, db_path, file_path, observer):
+    def __init__(self, stub_report_path, db_path, file_path, observer):
         self.file_path = file_path
         self.observer = observer  # Store the observer instance
         self.last_position_log = 0  # To keep track of the last read position for the log file
@@ -202,7 +202,8 @@ class NextflowTraceDBCompanion(FileSystemEventHandler):
         self.process_tracker.loc[self.process_tracker['process'] == process_trace['name'], 'completed_executions'] += 1
 
         # Update the tracker for elapsed time (convert to milliseconds)
-        self.process_tracker.loc[self.process_tracker['process'] == process_trace['name'], 'elapsed_time'] += process_trace['realtime'].total_seconds() * 1000
+        self.process_tracker.loc[self.process_tracker['process'] == process_trace['name'],
+                                 'elapsed_time'] += process_trace['realtime'].total_seconds() * 1000
 
     def display_progress_with_delta(self):
         """
@@ -348,7 +349,7 @@ class NextflowTraceDBCompanion(FileSystemEventHandler):
         if not (lower_bound <= process_trace['realtime'].total_seconds() * 1000 <= upper_bound):
             print(
                 f"Warning: Execution time for process '{process_trace['name']}' ({process_trace['realtime'].total_seconds():.2f} s) "
-                f"is outside the 99% probability range ({lower_bound/1000.0:.2f} s to {upper_bound/1000:.2f} s)."
+                f"is outside the 99% probability range ({lower_bound / 1000.0:.2f} s to {upper_bound / 1000:.2f} s)."
             )
 
 
@@ -365,9 +366,9 @@ def format_timedelta_as_hours(td):
     return f"{hours}h {minutes}min {seconds}s"
 
 
-def watch_file(stub_report_path, stub_dag_path, db_path, log_path):
+def watch_file(stub_report_path, db_path, log_path):
     observer = Observer()
-    event_handler = NextflowTraceDBCompanion(stub_report_path, stub_dag_path, db_path, log_path, observer)
+    event_handler = NextflowTraceDBCompanion(stub_report_path, db_path, log_path, observer)
     print(f"Watching for changes in {log_path}...")
     # Immediately execute file observation
     event_handler.parse_new_log_content()
@@ -399,8 +400,7 @@ if __name__ == "__main__":
     # sys.exit(1)
 
     stub_report_path = "./dat/250516_241226_CELEBI_stub/karol_241226_ult_2025-05-16_13_48_58_report.html"
-    stub_dag_path = "./dat/250516_241226_CELEBI_stub/karol_241226_ult_2025-05-16_13_48_58_dag.html"
 
     db_path = "./dat/nf_trace_db.sqlite"
     log_path = "./dat/.nextflow.log"
-    watch_file(stub_report_path, stub_dag_path , db_path, log_path)
+    watch_file(stub_report_path, db_path, log_path)
