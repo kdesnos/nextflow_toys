@@ -3,4 +3,4 @@ networkx
 spicy
 statsmodels
 watchdog
-sklearn
+scikit-learn

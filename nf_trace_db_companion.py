@@ -387,27 +387,30 @@ def watch_file(stub_report_path, db_path, log_path):
 
 if __name__ == "__main__":
     print("Nextflow Trace DB Companion is running...")
-    if len(sys.argv) != 4:
+    if len(sys.argv) > 1 and len(sys.argv) != 4:
         print("Usage: python script.py <sqlite_database path> <.nextflow.log file path> <stub report file path>")
         sys.exit(1)
+
+    if len(sys.argv) == 4:
         db_path = sys.argv[1]
         if not os.path.isfile(db_path):
             print(f"Error: File '{db_path}' does not exist.")
             sys.exit(1)
-
-        file_path = sys.argv[2]
-        if not os.path.isfile(file_path):
-            print(f"Error: File '{file_path}' does not exist.")
+        log_path = sys.argv[2]
+        if not os.path.isfile(log_path):
+            print(f"Error: File '{log_path}' does not exist.")
             sys.exit(1)
-
         stub_report_path = sys.argv[3]
         if not os.path.isfile(stub_report_path):
-            print(f"Error: File '{stub_report_path}' does not exist.")
-            sys.exit(1)
-
+                print(f"Error: File '{stub_report_path}' does not exist.")
+                sys.exit(1)
     else:
         stub_report_path = "./dat/250516_241226_CELEBI_stub/karol_241226_ult_2025-05-16_13_48_58_report.html"
         db_path = "./dat/nf_trace_db.sqlite"
         log_path = "./dat/.nextflow.log"
+
+    print(f"DB Path: {db_path}")
+    print(f"Log Path: {log_path}")
+    print(f"Stub Report Path: {stub_report_path}")
 
     watch_file(stub_report_path, db_path, log_path)
