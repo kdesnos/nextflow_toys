@@ -313,9 +313,17 @@ class NextflowTraceDBCompanion(FileSystemEventHandler):
         """
         Computes the total predicted execution time using the "count" column
         and updates the total_predicted_time attribute. Also computes the relative deviation (delta).
+        This method ensures that the total execution time is calculated based on the number of completed executions
+        and the predicted execution time for each process.
+        It also checks if the number of completed executions exceeds the predicted count and updates the "count" column accordingly.
 
         :return: None
         """
+        # If the process was executed more times than predicted, print a warning and update the "count" column
+        if self.process_tracker['completed_executions'].sum() > self.process_tracker['count'].sum():
+            print("Warning: More executions completed than predicted. This may indicate an issue with the stub run, or data dependent behavior.")
+            self.process_tracker['count'] = self.process_tracker['completed_executions']
+
         # Compute the total execution time
         self.process_tracker['total_execution_time'] = (
             self.process_tracker['elapsed_time']
