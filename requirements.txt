@@ -4,3 +4,4 @@ spicy
 statsmodels
 watchdog
 scikit-learn
+lxml

@@ -410,8 +410,8 @@ if __name__ == "__main__":
             sys.exit(1)
         stub_report_path = sys.argv[3]
         if not os.path.isfile(stub_report_path):
-                print(f"Error: File '{stub_report_path}' does not exist.")
-                sys.exit(1)
+            print(f"Error: File '{stub_report_path}' does not exist.")
+            sys.exit(1)
     else:
         stub_report_path = "./dat/250516_241226_CELEBI_stub/karol_241226_ult_2025-05-16_13_48_58_report.html"
         db_path = "./dat/nf_trace_db.sqlite"

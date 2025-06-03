@@ -1,6 +1,7 @@
 import networkx as nx
 from pathlib import Path
 
+
 def export_to_dot(G: nx.DiGraph, output_path: Path):
     """
     Exports a NetworkX graph to a DOT file with the specified format.
@@ -19,10 +20,12 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
         outputs_str = " | ".join(outputs)
         file.write(f'\t{"  " * level}{node}[label="{{{actor_name}}} | {{{{ {inputs_str} }} | | {{ {outputs_str} }}}}"')
         file.write(f', tooltip="x{data["nb_exec"]}"')
-        if(data['type'] == "operator"):
+        if (data['type'] == "operator"):
             file.write(f', xlabel="{actor_name}", shape=point, height=0.1, width=0.1')
-        if(data['type'] == "factory"):
+        if (data['type'] == "factory"):
             file.write(f', xlabel="{actor_name}", peripheries=2, shape=point, height=0.15, width=0.15')
+        if (data['type'] == "interface"):
+            file.write(f', xlabel="{actor_name}", shape=point, height=0.2, width=0.2')
         file.write('];\n')
 
     with open(output_path, 'w', encoding='utf-8') as file:
@@ -37,7 +40,7 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
         subgraphs = {}
         for node, data in G.nodes(data=True):
             subgraph_name = data.get('subgraph')
-            if subgraph_name:
+            if subgraph_name and subgraph_name != '':
                 if not subgraph_name.startswith("unnamed_"):
                     subgraph_name = f"{top_graph_name}:" + subgraph_name
                 if subgraph_name not in subgraphs:
@@ -69,7 +72,7 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
                 nested_subgraphs = subgraph_name.split(":")
                 current_nodes = nodes
                 for i, subgraph in enumerate(nested_subgraphs):
-                    current_subgraph_name = ":".join(nested_subgraphs[:i+1])
+                    current_subgraph_name = ":".join(nested_subgraphs[:i + 1])
                     if current_subgraph_name == subgraph_name:
                         write_subgraph(file, current_subgraph_name, current_nodes, level=level)
                     else:
@@ -79,7 +82,7 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
                             file.write(f'\t{"  " * level}subgraph {top_graph_name} {{\n')
                         level += 1
                 for l in range(level, 0, -1):
-                    file.write(f'\t{"  " * (l-1)}}}\n')
+                    file.write(f'\t{"  " * (l - 1)}}}\n')
                 level = 0
 
         write_nested_subgraphs(file, subgraphs)

@@ -3,6 +3,7 @@ import networkx as nx
 import export_dag_to_dot
 import extract_trace_from_html
 import import_dag_from_mermaid_html
+from lxml import etree
 
 
 class PisdfExporter:
@@ -20,18 +21,7 @@ class PisdfExporter:
             raise TypeError("The graph parameter must be an instance of networkx.DiGraph.")
         self.graph = graph
         self.interface_counter = 0  # Counter for interface nodes
-
-    def export(self) -> str:
-        """
-        Exports the directed graph to a PiSDF representation.
-        :return: A string representing the PiSDF format of the graph.
-        """
-        results = []
-
-        for node, data in self.graph.nodes(data=True):
-            results.append(f"{node}")
-
-        return "\n".join(results)
+        self.hierarchical_counter = 0  # Counter for hierarchical actors
 
     def transform_graph(self):
         """
@@ -41,7 +31,125 @@ class PisdfExporter:
         # Collect subgraphs
         # Nodes not belonging to any subgraph are placed in the "main" subgraph.
         subgraph_nodes = self.collect_subgraph_nodes()
+
+        # Create a unique source and sink for the top-level graph
+        # Don't not keep merged source, as they represent parameters passed to processes without processing.
+        # Keep sink, as they represent the result of the processing.
+        self.merge_source_sink(subgraph_nodes)
+
+        # Collect edges for each subgraph and handle hierarchical relationships
+        # by adding interface nodes and splitting edges as needed.
+        # This will also modify the graph in place to add interface nodes.
         subgraph_edges = self.collect_subgraph_edges(subgraph_nodes)
+
+        # Split the main subgraph into subgraphs based on the provided nodes and edges
+        # This will also modify the graph in place to add hierarchical actors.
+        # This is done to ensure that the hierarchical actors are created correctly
+        # and that the edges are split correctly.
+        self.split_subgraphs(subgraph_nodes, subgraph_edges)
+
+    def split_subgraphs(self, subgraph_nodes: list, subgraph_edges) -> None:
+        """
+        Splits the main subgraph into subgraphs based on the provided nodes and edges.
+        This method modifies the graph in place.
+
+        :param subgraph_nodes: A list of nodes that belong to the main subgraph.
+        :param subgraph_edges: A dictionary where keys are subgraph names and values are lists of edges.
+        """
+        # Process each subgraph (work on a copy of the subgraph_nodes to avoid modifying it during iteration)
+        for subgraph_name, nodes in list(subgraph_nodes.items()):
+            # Find the hierarchical actors within the subgraph
+            hierarchical_nodes = {}
+            for edge in list(subgraph_edges[subgraph_name]):
+                replacement_edge = [None, None]
+                # If the target or the source is an interface to a subgraph, we need to find the path
+                for i in [0, 1]:  # Ensure both source and target are looked up
+                    path = self.lookup_node_subgraph(edge[i], subgraph_nodes)
+                    if (len(subgraph_name) < len(path)):
+                        # The edge connects to a subgraph, create the hierarchical actor unless it already exists
+                        if path not in hierarchical_nodes:
+                            hierarchical_actor_name = path[len(subgraph_name):].lstrip(':')
+                            hierarchical_actor_node = "h" + f"{self.hierarchical_counter:03d}"
+                            self.hierarchical_counter += 1
+                            self.graph.add_node(hierarchical_actor_node, type="hierarchical", name=hierarchical_actor_name, nb_exec=1, subgraph=path[:len(subgraph_name)].strip('main').lstrip(':'),
+                                                hierarchical_subgraph=path)
+                            subgraph_nodes[subgraph_name].append(hierarchical_actor_node)
+                            hierarchical_nodes[path] = hierarchical_actor_node
+
+                        replacement_edge[i] = hierarchical_nodes[path]
+
+                if (replacement_edge[0] is not None or replacement_edge[1] is not None):
+                    # Fetch the source & target of replacement edge
+                    source = replacement_edge[0] if replacement_edge[0] else edge[0]
+                    target = replacement_edge[1] if replacement_edge[1] else edge[1]
+                    # Add the edge to the graph
+                    self.graph.add_edge(source, target, **self.graph.get_edge_data(edge[0], edge[1]))
+                    subgraph_edges[subgraph_name].append((source, target))
+                    # Keep a ref to the interfaces in the edge data
+                    if replacement_edge[0] is not None:
+                        self.graph.edges[source, target]['interface_source'] = edge[0]
+                    if replacement_edge[1] is not None:
+                        self.graph.edges[source, target]['interface_target'] = edge[1]
+
+                    # Remove the original edges that were replaced by hierarchical actors
+                    self.graph.remove_edge(edge[0], edge[1])
+                    subgraph_edges[subgraph_name].remove((edge[0], edge[1]))
+
+    def merge_source_sink(self, subgraph_nodes: dict, keep_merged_source=False, keep_merged_sink=True) -> None:
+        """
+        Merges source and sink nodes in the main subgraph that have a space as a name and no incoming or outgoing edges.
+        If keep_merged_source is True, a unique source node is created if there are multiple source nodes.
+        If keep_merged_sink is True, a unique sink node is created if there are multiple sink nodes.
+        This method modifies the graph in place.
+
+        :param subgraph_nodes: A dictionary where keys are subgraph names and values are lists of nodes.
+        :param keep_merged_source: If True, a unique source node will be created if there are multiple source nodes.
+        :param keep_merged_sink: If True, a unique sink node will be created if there are multiple sink nodes.
+        """
+        # Identify nodes in main subgraph that have a space as a name and no incoming edges
+        main_subgraph = subgraph_nodes.get("main", [])
+        source_nodes = [node for node in main_subgraph if self.graph.in_degree(node) == 0 and self.graph.nodes[node].get('name', '').strip() == '']
+
+        # If keep_merged_source is True, we do not create a unique source node
+        if keep_merged_source:
+            # Create a unique source node if there are multiple source nodes
+            if len(source_nodes) > 1:
+                unique_source = "source"
+                self.graph.add_node(unique_source, type="process", name="Source", nb_exec=1, subgraph="unnamed_src")
+                main_subgraph.append(unique_source)
+                # connect all outgoing edges from source nodes to the unique source
+                for source in source_nodes:
+                    for target in self.graph.successors(source):
+                        data = self.graph.get_edge_data(source, target)
+                        self.graph.add_edge(unique_source, target, **data)
+                    # remove the original source node
+                    self.graph.remove_node(source)
+        else:
+            # Remove all source nodes that have a space as a name and no incoming edges
+            for source in source_nodes:
+                self.graph.remove_node(source)
+
+        # Identify nodes in main subgraph that have a space as a name and no outgoing edges
+        sink_nodes = [node for node in main_subgraph if self.graph.out_degree(node) == 0 and self.graph.nodes[node].get('name', '').strip() == '']
+
+        # If keep_merged_sink is True, we do not create a unique sink node
+        if keep_merged_sink:
+            # Create a unique sink node if there are multiple sink nodes
+            if len(sink_nodes) > 1:
+                unique_sink = "sink"
+                self.graph.add_node(unique_sink, type="operator", name="Sink", nb_exec=1, subgraph="unnamed_sink")
+                main_subgraph.append(unique_sink)
+                # connect all incoming edges to the unique sink
+                for sink in sink_nodes:
+                    for source in self.graph.predecessors(sink):
+                        data = self.graph.get_edge_data(source, sink)
+                        self.graph.add_edge(source, unique_sink, **data)
+                    # remove the original sink node
+                    self.graph.remove_node(sink)
+        else:
+            # Remove all sink nodes that have a space as a name and no outgoing edges
+            for sink in sink_nodes:
+                self.graph.remove_node(sink)
 
     def collect_subgraph_nodes(self) -> dict:
         """
@@ -102,7 +210,7 @@ class PisdfExporter:
 
             if source_subgraph == target_subgraph:
                 # Case 1: Both producer and consumer are in the same subgraph
-                subgraph_edges[source_subgraph].append((source, target, data))
+                subgraph_edges[source_subgraph].append((source, target))
             else:
                 # Generalized Case: Producer and consumer are in distinct subgraphs
                 source_path = (source_subgraph or "main").split(":")
@@ -144,7 +252,7 @@ class PisdfExporter:
             subgraphs_nodes[":".join(source_path[:i])].append(interface_name)
             # Add the edge berween the internal node and the interface toward upper level
             self.graph.add_edge(current_node, interface_name, **data)  # Add edge to the graph
-            subgraph_edges[":".join(source_path[:i])].append((current_node, interface_name, data))
+            subgraph_edges[":".join(source_path[:i])].append((current_node, interface_name))
             current_node = interface_name
 
         # Build the path from the common prefix to the target
@@ -156,21 +264,79 @@ class PisdfExporter:
             self.graph.add_node(interface_name, type="interface", name=data['label'], nb_exec=1, subgraph=":".join(target_path[1:i + 1]))
             # Add the edge between the external node and the interface toward lower level
             self.graph.add_edge(current_node, interface_name, **data)  # Add edge to the graph
-            subgraph_edges[":".join(target_path[:i])].append((current_node, interface_name, data))
+            subgraph_edges[":".join(target_path[:i])].append((current_node, interface_name))
             current_node = interface_name
 
         # Add the final edge to the target
-        subgraph_edges[":".join(target_path)].append((current_node, target, data))
+        subgraph_edges[":".join(target_path)].append((current_node, target))
         self.graph.add_edge(current_node, target, **data)  # Add edge to the graph
 
-    def export_to_file(self, file_path: str):
+    def print_subgraph_header(self, subgraph_name: str):
+        """
+        Prints the header for a subgraph in PiSDF format.
+
+        :param subgraph_name: The name of the subgraph.
+        """
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+        <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+        <key attr.name="parameters" for="graph" id="parameters"/>
+        <key attr.name="variables" for="graph" id="variables"/>
+        <key attr.name="arguments" for="node" id="arguments"/>
+        <key attr.name="name" attr.type="string" for="graph"/>
+        <key attr.name="graph_desc" attr.type="string" for="node"/>
+        <graph edgedefault="directed">
+            <data key="name">{subgraph_name}</data>
+        """
+
+    def print_subgraph_footer(self):
+        """
+        Prints the footer for a subgraph in PiSDF format.
+        """
+        return """
+            </graph>
+        </graphml>"""
+
+    def print_actor_node(self, node: str, data: dict):
+        """
+        Prints a node in PiSDF format.
+
+        :param node: The name of the node.
+        :param data: A dictionary containing the node's attributes.
+        """
+        return f"""<node id="{data.get('name', '')}">
+            </node>"""
+
+    def export_to_files(self, folder_path: str):
         """
         Exports the directed graph to a file in PiSDF format.
 
-        :param file_path: The path to the file where the PiSDF representation will be saved.
+        :param folder_path: The path to the folder where the PiSDF representation will be saved.
         """
-        with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(self.export())
+        for subgraph_name, nodes in self.collect_subgraph_nodes().items():
+            subgraph_path = Path(folder_path, f"{subgraph_name.replace(':', '_')}.pi")
+
+            # Collect the XML content in a string
+            xml_content = []
+            xml_content.append(self.print_subgraph_header(subgraph_name))
+            for node in nodes:
+                data = self.graph.nodes[node]
+                xml_content.append(self.print_actor_node(node, data))
+            xml_content.append(self.print_subgraph_footer())
+
+            # Join the XML content and remove unnecessary whitespace
+            raw_xml = "\n".join(xml_content)
+            raw_xml = "".join(line.strip() for line in raw_xml.splitlines())  # Remove all newlines and indentation
+
+            # Parse and format the XML using lxml.etree
+            try:
+                root = etree.fromstring(raw_xml.encode("utf-8"))
+                formatted_xml = etree.tostring(root, pretty_print=True, encoding="unicode")
+            except etree.XMLSyntaxError as e:
+                raise ValueError(f"Error parsing XML: {e}")
+
+            # Write the formatted XML to the file
+            with open(subgraph_path, 'w', encoding='utf-8') as file:
+                file.write(formatted_xml)
 
 
 if __name__ == "__main__":
@@ -196,4 +362,4 @@ if __name__ == "__main__":
     pisdf_exporter = PisdfExporter(dag)
     pisdf_exporter.transform_graph()
     export_dag_to_dot.export_to_dot(pisdf_exporter.graph, nf_report_path.with_name(nf_report_path.name + "_dag.dot"))
-    pisdf_exporter.export_to_file(nf_report_path.with_name(nf_report_path.name + "_dag.pi"))
+    pisdf_exporter.export_to_files(nf_report_path.with_name(nf_report_path.name + "_export"))
