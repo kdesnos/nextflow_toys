@@ -2,7 +2,7 @@ import networkx as nx
 from pathlib import Path
 
 
-def export_to_dot(G: nx.DiGraph, output_path: Path):
+def export_to_dot(G: nx.MultiDiGraph, output_path: Path):
     """
     Exports a NetworkX graph to a DOT file with the specified format.
 
@@ -88,10 +88,10 @@ def export_to_dot(G: nx.DiGraph, output_path: Path):
         write_nested_subgraphs(file, subgraphs)
 
         # Write edges
-        for source, target, data in G.edges(data=True):
+        for source, target, key, data in G.edges(data=True, keys=True):
             label = data.get('label', '')
-            source_port = f"o{list(G.out_edges(source)).index((source, target)) + 1}"
-            target_port = f"i{list(G.in_edges(target)).index((source, target)) + 1}"
+            source_port = f"o{list(G.out_edges(source, keys=True)).index((source, target, key)) + 1}"
+            target_port = f"i{list(G.in_edges(target, keys=True)).index((source, target, key)) + 1}"
             file.write(f'\t{source}:{source_port} -> {target}:{target_port} [label="{label}"];\n')
 
         file.write("}\n")

@@ -44,7 +44,7 @@ def extract_mermaid_graph(dag_report: Path) -> nx.DiGraph:
     factory_pattern = re.compile(r'Channel\..*')
 
     # Create a directed graph
-    G = nx.DiGraph()
+    G = nx.MultiDiGraph()
 
     # Extract nodes and their names
     nodes = node_pattern.findall(mermaid_graph)
