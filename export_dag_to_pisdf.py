@@ -48,8 +48,40 @@ class PisdfExporter:
         # and that the edges are split correctly.
         self.split_subgraphs(subgraph_nodes, subgraph_edges)
 
+        # Fill the actor_name attributes of the nodes so that each node has a unique name within its subgraph
+        self.name_actors(subgraph_nodes)
+
         # Give a name to all input and output "ports" of edges
         self.name_ports(subgraph_nodes, subgraph_edges)
+
+    def name_actors(self, subgraph_nodes: dict) -> None:
+        """
+        Names the actors in the subgraphs based on their attributes.
+        This method modifies the graph in place.
+
+        :param subgraph_nodes: A dictionary where keys are subgraph names and values are lists of nodes.
+        """
+        for _, nodes in subgraph_nodes.items():
+            node_names = {}
+            for node in nodes:
+                # skip interface nodes, they will be named when naming the ports of hierarchical actors
+                if self.graph.nodes[node].get('type') == 'interface':
+                    continue
+                # Get the name of the node, replacing dots and commas with underscores for valid names
+                name = self.graph.nodes[node].get('name').replace('.', '_').replace(',', '_')
+                if not name in node_names:
+                    node_names[name] = []
+                node_names[name].append(node)
+
+            for name, nodes in node_names.items():
+                if (len(nodes) > 1):
+                    # If there are multiple nodes with the same name, we need to rename them
+                    for i, node in enumerate(nodes):
+                        new_name = f"{name}_{i:02d}"
+                        self.graph.nodes[node]['actor_name'] = new_name
+                else:
+                    # If there is only one node with the name, we can use the name directly
+                    self.graph.nodes[nodes[0]]['actor_name'] = name
 
     def name_ports(self, subgraph_nodes: dict, subgraph_edges: dict) -> None:
         # Browse through the subgraphs and their nodes and name the ports
@@ -86,9 +118,24 @@ class PisdfExporter:
                         source, target, key, data = edge
                         # If the edge is linked to an hierarchical actor, update the name of the interface_source or interface_target
                         if edge in in_edges and data.get('interface_source'):
-                            self.graph.nodes[data.get('interface_source')]['name'] = self.graph.edges[source, target, key]['snk_port']
+                            interface_data = self.graph.nodes[data.get('interface_source')]
+                            snk_port_name = self.graph.edges[source, target, key]['snk_port']
+                            interface_data['name'] = snk_port_name
+                            interface_data['actor_name'] = snk_port_name
                         if edge in out_edges and data.get('interface_target'):
-                            self.graph.nodes[data.get('interface_target')]['name'] = self.graph.edges[source, target, key]['src_port']
+                            interface_data = self.graph.nodes[data.get('interface_target')]
+                            src_port_name = self.graph.edges[source, target, key]['src_port']
+                            interface_data['name'] = src_port_name
+                            interface_data['actor_name'] = src_port_name
+
+        # Find all edges connected to an interface node, and rename theirs port to be the same as the interface node name
+        for source, target, key, data in self.graph.edges(data=True, keys=True):
+            if self.graph.nodes[source].get('type') == 'interface':
+                # If the source is an interface node, rename the target port to the interface node name
+                self.graph.edges[source, target, key]['src_port'] = self.graph.nodes[source]['name']
+            if self.graph.nodes[target].get('type') == 'interface':
+                # If the target is an interface node, rename the source port to the interface node name
+                self.graph.edges[source, target, key]['snk_port'] = self.graph.nodes[target]['name']
 
     def split_subgraphs(self, subgraph_nodes: list, subgraph_edges) -> None:
         """
@@ -360,12 +407,18 @@ class PisdfExporter:
         :param node: The name of the node.
         :param data: A dictionary containing the node's attributes.
         """
-        return f"""<node id="{data.get('name').replace('.', '_').replace(',', '_')}" kind="actor">
+        return f"""<node id="{data.get('actor_name')}" kind="actor">
                 {self.print_node_ports(node)}
             </node>"""
 
     def print_hierarchical_actor_node(self, node: str, data: dict):
-        return f"""<node id="{data.get('name').replace('.', '_').replace(',', '_')}" kind="actor">
+        """
+        Prints a hierarchical actor node in PiSDF format.
+
+        :param node: The name of the node.
+        :param data: A dictionary containing the node's attributes.
+        """
+        return f"""<node id="{data.get('actor_name')}" kind="actor">
                 <data key="graph_desc">Algo/{data.get('hierarchical_subgraph', '').replace(':', '_')}.pi</data>
                 {self.print_node_ports(node)}
             </node>"""
@@ -386,8 +439,16 @@ class PisdfExporter:
         :param node: The name of the node.
         :param data: A dictionary containing the node's attributes.
         """
-        return f"""<node id="{data.get('name').replace('.', '_').replace(',', '_')}" kind="{"src" if data.get('direction') == 'in' else "snk"}">
+        return f"""<node id="{data.get('actor_name')}" kind="{"src" if data.get('direction') == 'in' else "snk"}">
+                {self.print_node_ports(node)}
             </node>"""
+
+    def print_edge(self, source: str, target: str, key: int, data: dict):
+        source_name = self.graph.nodes[source]["actor_name"]
+        target_name = self.graph.nodes[target]["actor_name"]
+        src_port = data.get('src_port', 'u')
+        snk_port = data.get('snk_port', 'u')
+        return f"""<edge kind="fifo" source="{source_name}" sourceport="{src_port}" target="{target_name}" targetport="{snk_port}" type="uchar"/>"""
 
     def export_to_files(self, folder_path: str):
         """
@@ -395,7 +456,9 @@ class PisdfExporter:
 
         :param folder_path: The path to the folder where the PiSDF representation will be saved.
         """
-        for subgraph_name, nodes in self.collect_subgraph_nodes().items():
+        subgraph_nodes = self.collect_subgraph_nodes()
+        subgraph_edges = self.collect_subgraph_edges(subgraph_nodes)
+        for subgraph_name, nodes in subgraph_nodes.items():
             subgraph_path = Path(folder_path, f"{subgraph_name.replace(':', '_')}.pi")
 
             # Collect the XML content in a string
@@ -410,6 +473,12 @@ class PisdfExporter:
                     xml_content.append(self.print_interface_node(node, data))
                 else:
                     xml_content.append(self.print_actor_node(node, data))
+
+            # Add edges to the XML content
+            for source, target, key in subgraph_edges[subgraph_name]:
+                data = self.graph.get_edge_data(source, target, key)
+                xml_content.append(self.print_edge(source, target, key, data))
+
             xml_content.append(self.print_subgraph_footer())
 
             # Join the XML content and remove unnecessary whitespace
