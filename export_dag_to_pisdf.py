@@ -63,23 +63,24 @@ class PisdfExporter:
                 edge_names = {}
                 for edge in in_edges + out_edges:
                     data = edge[3]
-                    edge_name = data.get('label') if data.get('label') is not None else 'unnamed'
+                    edge_name = data.get('label') if data.get('label') not in [None, "", "-"] else 'unnamed'
                     if edge_name not in edge_names:
                         edge_names[edge_name] = []
                     edge_names[edge_name].append(edge)
 
                 # Name the ports based on the edge names, with unique identifiers
                 for name, edges in edge_names.items():
+                    port_name = name.replace(",", "_")  # Replace commas with underscores for valid port names
                     if len(edges) > 1:
                         # If there are multiple edges, we need to create unique names for the ports
                         for i, edge in enumerate(edges):
                             source, target, key, data = edge
-                            port_name = f"{name}_{i:02d}"
-                            self.graph.edges[source, target, key]['snk_port' if edge in in_edges else 'src_port'] = port_name
+                            port_name_idx = f"{port_name}_{i:02d}"
+                            self.graph.edges[source, target, key]['snk_port' if edge in in_edges else 'src_port'] = port_name_idx
                     else:
                         # If there is only one edge, we can use the edge name directly
                         source, target, key, data = edges[0]
-                        self.graph.edges[source, target, key]['snk_port' if edges[0] in in_edges else 'src_port'] = name
+                        self.graph.edges[source, target, key]['snk_port' if edges[0] in in_edges else 'src_port'] = port_name
 
                     for edge in edges:
                         source, target, key, data = edge
@@ -360,12 +361,23 @@ class PisdfExporter:
         :param data: A dictionary containing the node's attributes.
         """
         return f"""<node id="{data.get('name').replace('.', '_').replace(',', '_')}" kind="actor">
+                {self.print_node_ports(node)}
             </node>"""
 
     def print_hierarchical_actor_node(self, node: str, data: dict):
         return f"""<node id="{data.get('name').replace('.', '_').replace(',', '_')}" kind="actor">
-            <data key="graph_desc">Algo/{data.get('hierarchical_subgraph', '').replace(':', '_')}.pi</data>
+                <data key="graph_desc">Algo/{data.get('hierarchical_subgraph', '').replace(':', '_')}.pi</data>
+                {self.print_node_ports(node)}
             </node>"""
+
+    def print_node_ports(self, node):
+        result = []
+        for source, target, key, data in self.graph.in_edges(node, data=True, keys=True):
+            result.append(f'<port annotation="NONE" expr="0.0" kind="input" name="{data['snk_port']}"/>')
+        for source, target, key, data in self.graph.out_edges(node, data=True, keys=True):
+            result.append(f'<port annotation="NONE" expr="0.0" kind="output" name="{data['src_port']}"/>')
+
+        return "\n".join(result)
 
     def print_interface_node(self, node: str, data: dict):
         """
