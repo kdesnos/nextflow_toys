@@ -14,12 +14,14 @@ def export_to_dot(G: nx.MultiDiGraph, output_path: Path):
 
     def write_node(file, node, data, level=0):
         actor_name = data['name']
-        inputs = [f"<i{i}>" for i in range(1, G.in_degree(node) + 1)]
-        outputs = [f"<o{i}>" for i in range(1, G.out_degree(node) + 1)]
+        inputs = [f"<i{i + 1}>{f" {edge[3]['sdf_cons']:.0f}" if edge[3]['sdf_cons']
+                               is not None else ""}" for i, edge in enumerate(G.in_edges(node, keys=True, data=True))]
+        outputs = [f"<o{i + 1}>{f" {edge[3]['sdf_prod']:.0f}" if edge[3]['sdf_prod']
+                                is not None else ""}" for i, edge in enumerate(G.out_edges(node, keys=True, data=True))]
         inputs_str = " | ".join(inputs)
         outputs_str = " | ".join(outputs)
-        file.write(f'\t{"  " * level}{node}[label="{{{actor_name}}} | {{{{ {inputs_str} }} | | {{ {outputs_str} }}}}"')
-        file.write(f', tooltip="x{data["nb_exec"]}"')
+        file.write(f'\t{"  " * level}{node}[label="{{{actor_name}}} | {{{{ {inputs_str} }} | x{data["nb_exec"]} | {{ {outputs_str} }}}}"')
+        file.write(f', tooltip="{node}"')
         if (data['type'] == "operator"):
             file.write(f', xlabel="{actor_name}", shape=point, height=0.1, width=0.1')
         if (data['type'] == "factory"):

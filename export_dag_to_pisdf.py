@@ -1,3 +1,4 @@
+from math import gcd, lcm
 from pathlib import Path
 import networkx as nx
 import export_dag_to_dot
@@ -53,6 +54,118 @@ class PisdfExporter:
 
         # Give a name to all input and output "ports" of edges
         self.name_ports(subgraph_nodes, subgraph_edges)
+
+        # Set an SDF production and consumption rate for each edge
+        # according to the number of executions of the process
+        self.set_sdf_rates(subgraph_nodes, subgraph_edges)
+
+    def set_sdf_rates(self, subgraph_nodes: dict, subgraph_edges: dict) -> None:
+        """
+        Sets the SDF production and consumption rates for each edge according to the number of executions of the process.
+        This method modifies the graph in place.
+
+        :param subgraph_nodes: A dictionary where keys are subgraph names and values are lists of nodes.
+        :param subgraph_edges: A dictionary where keys are subgraph names and values are lists of edges.
+        """
+        # Dictionnary to hold the computed number of executions of hierarchical actors
+        hierarchical_actor_nb_exec = {}
+
+        # Iterate over the subgraphs, in a bottom-up manner
+        subgraph_names = list(subgraph_nodes.keys())
+        subgraph_names.sort(key=lambda x: len(x.split(':')), reverse=True)
+        for subgraph_name in subgraph_names:
+            nodes = subgraph_nodes[subgraph_name]
+
+            # Find the common divisor of the number of executions of the processes in the subgraph
+            # exclude interface nodes as they do not have a number of executions
+            all_nb_exec = [self.graph.nodes[node].get('nb_exec') for node in nodes if self.graph.nodes[node].get('type') != 'interface']
+            # Exclude -1 values to avoid division by zero. They correspond to channel operators whose number of executions is not defined
+            # and will be inferred from the number of executions of the processes they connect.
+            all_nb_exec = [nb_exec for nb_exec in all_nb_exec if nb_exec > 0]
+            # Calculate the greatest common divisor (GCD) of the number of executions
+            subgraph_gcd = gcd(*all_nb_exec)
+            hierarchical_actor_nb_exec[subgraph_name] = subgraph_gcd
+
+            # If the subgraph GCD is greater than 1, we need to normalize the number of execution of nodes
+            if subgraph_gcd > 1:
+                # Normalize the number of executions of each node in the subgraph
+                for node in nodes:
+                    nb_exec = self.graph.nodes[node].get('nb_exec')
+                    if self.graph.nodes[node].get('type') != 'interface' and nb_exec > 0:
+                        self.graph.nodes[node]['nb_exec'] = nb_exec / subgraph_gcd
+
+            # For now, print an error if a channel operator is found with a number of executions not defined
+            if any(self.graph.nodes[node].get('nb_exec') < 0 for node in nodes):
+                # TODO: Infer the number of execution of channel operators.
+                # Hint: Find the connected subgraphs linking one or more channel operators to
+                # other nodes with a defined number of executions. For each identified
+                # connected subgraph, set the number of executions of the channel operator
+                # to the maximum number of executions of the connected nodes.
+                raise ValueError(f"Channel operators in subgraph {subgraph_name} have a number of executions not defined. "
+                                 "This is not supported yet. See todo in the code for more details.")
+
+            # Function to get the number of executions of a node, considering hierarchical actors
+            def get_nb_exec(node):
+                if self.graph.nodes[node].get('type') == 'hierarchical':
+                    subgraph = self.graph.nodes[node].get('hierarchical_subgraph')
+                    return hierarchical_actor_nb_exec[subgraph]
+                return self.graph.nodes[node].get('nb_exec')
+
+            # Iterate over the edges in the subgraph and set the SDF production and consumption rates.
+            for source, target, key in subgraph_edges[subgraph_name]:
+                source_nb_exec = get_nb_exec(source)
+                target_nb_exec = get_nb_exec(target)
+
+                target_nb_exec = self.graph.nodes[target]['nb_exec']
+
+                # Set the rates of each node to the LCM of the two execution couts / number of executions of the process
+                edge_lcm = lcm(source_nb_exec, target_nb_exec)
+                self.graph.edges[source, target, key]['sdf_prod'] = edge_lcm / source_nb_exec
+                self.graph.edges[source, target, key]['sdf_cons'] = edge_lcm / target_nb_exec
+
+        # Interface nodes need special post-processing to make sure their inner and external rates are equal.
+        # Iterate as long as needed to ensure all interface nodes are processed correctly.
+        has_done_change = True
+        while has_done_change:
+            has_done_change = False
+
+            # Use bottom-up approach to ensure that all hierarchical actors are processed
+            # and their internal rates are set correctly before processing the interface nodes.
+            for subgraph_name in subgraph_names:
+                for source, target, key in subgraph_edges[subgraph_name]:
+                    data = self.graph.edges[source, target, key]
+
+                    if self.graph.nodes[source]['type'] == 'hierarchical':
+                        external_prod = data['sdf_prod']
+                        interface = data['interface_target']
+                        internal_edge = list(self.graph.in_edges(interface, data=True, keys=True))[
+                            0]  # There should be only one incoming edge to the interface node
+                        internal_cons = internal_edge[3]['sdf_cons']
+                        if (external_prod != internal_cons):
+                            has_done_change = True
+                            # Set the rate to the LCM of the external and internal rates
+                            lcm_rate = lcm(int(external_prod), int(internal_cons))
+                            data['sdf_prod'] = lcm_rate
+                            self.graph.edges[internal_edge[0], internal_edge[1], internal_edge[2]]['sdf_cons'] = lcm_rate
+                            # Update other rates of the edges to match the new production and consumption rates
+                            data['sdf_cons'] *= (lcm_rate / external_prod)
+                            self.graph.edges[internal_edge[0], internal_edge[1], internal_edge[2]]['sdf_prod'] *= (lcm_rate / internal_cons)
+
+                    if self.graph.nodes[target]['type'] == 'hierarchical':
+                        external_cons = data['sdf_cons']
+                        interface = data['interface_source']
+                        internal_edge = list(self.graph.out_edges(interface, data=True, keys=True))[
+                            0]  # There should be only one outgoing edge from the interface node
+                        internal_prod = internal_edge[3]['sdf_prod']
+                        if (external_cons != internal_prod):
+                            has_done_change = True
+                            # Set the rate to the LCM of the external and internal rates
+                            lcm_rate = lcm(int(external_cons), int(internal_prod))
+                            data['sdf_cons'] = lcm_rate
+                            self.graph.edges[internal_edge[0], internal_edge[1], internal_edge[2]]['sdf_prod'] = lcm_rate
+                            # Update other rates of the edges to match the new production and consumption rates
+                            data['sdf_prod'] *= (lcm_rate / external_cons)
+                            self.graph.edges[internal_edge[0], internal_edge[1], internal_edge[2]]['sdf_cons'] *= (lcm_rate / internal_prod)
 
     def name_actors(self, subgraph_nodes: dict) -> None:
         """
@@ -426,9 +539,9 @@ class PisdfExporter:
     def print_node_ports(self, node):
         result = []
         for source, target, key, data in self.graph.in_edges(node, data=True, keys=True):
-            result.append(f'<port annotation="NONE" expr="0.0" kind="input" name="{data['snk_port']}"/>')
+            result.append(f'<port annotation="NONE" expr="{data['sdf_cons']:.0f}" kind="input" name="{data['snk_port']}"/>')
         for source, target, key, data in self.graph.out_edges(node, data=True, keys=True):
-            result.append(f'<port annotation="NONE" expr="0.0" kind="output" name="{data['src_port']}"/>')
+            result.append(f'<port annotation="NONE" expr="{data['sdf_prod']:.0f}" kind="output" name="{data['src_port']}"/>')
 
         return "\n".join(result)
 
@@ -511,10 +624,7 @@ if __name__ == "__main__":
     dag = import_dag_from_mermaid_html.extract_mermaid_graph(dag_report)
 
     # Add the number of executions of each process to the graph
-    for node, data in dag.nodes(data=True):
-        process_full_name = data.get('name', '') if not data.get('subgraph') else data.get('subgraph', '') + ":" + data.get('name', '')
-        nb_exec = trace_df['process'].str.contains(process_full_name).sum()
-        dag.nodes[node]['nb_exec'] = nb_exec if nb_exec > 0 else 1  # If the process is not in the trace, we assume it was executed once
+    import_dag_from_mermaid_html.add_execution_counts_to_graph(dag, trace_df)
 
     # Export the DAG to PiSDF format and to a DOT file
     pisdf_exporter = PisdfExporter(dag)
