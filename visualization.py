@@ -319,4 +319,4 @@ def plot_execution_time_predictions(db_manager: NextflowTraceDBManager, process_
     # Save and show the plot
     plt.tight_layout()
     plt.subplots_adjust(top=0.9)
-    plt.show()
+    plt.show(block=False)
