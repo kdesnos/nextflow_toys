@@ -222,7 +222,7 @@ def plot_icicle_chart(trace_df, include_names=False):
     fig.show()
 
 
-def plot_execution_time_predictions(db_manager: NextflowTraceDBManager, process_name, trace_names=None, linear_model=None, traces_for_model=None):
+def plot_execution_time_predictions(db_manager: NextflowTraceDBManager, process_name, trace_names=None, linear_model=None, traces_for_model=None, is_resolved_name=True):
     """
     Plots the actual vs predicted execution times for a process across multiple traces.
 
@@ -246,14 +246,14 @@ def plot_execution_time_predictions(db_manager: NextflowTraceDBManager, process_
             db_manager,
             process_name,
             print_info=True,
-            is_resolved_name=True,
+            is_resolved_name=is_resolved_name,
             trace_names=traces_for_model
         )
         print(f"\nLinear model expression: {linear_model['expression']}")
 
     # Retrieve execution times for the given traces
     execution_times = db_manager.process_executions_manager.getExecutionTimesForProcessAndTraces(
-        process_name, trace_names, is_resolved_name=True
+        process_name, trace_names, is_resolved_name=is_resolved_name
     )
     if execution_times.empty:
         print("No execution data found. Exiting.")
