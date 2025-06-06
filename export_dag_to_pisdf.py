@@ -1,13 +1,14 @@
 from math import gcd, lcm
 from pathlib import Path
 import networkx as nx
+import pandas
 import export_dag_to_dot
 import extract_trace_from_html
 import import_dag_from_mermaid_html
 from lxml import etree
 
 
-class PisdfExporter:
+class PreesmExporter:
     """
     A class to export a networkx.DiGraph to a PiSDF representation.
     """
@@ -609,6 +610,161 @@ class PisdfExporter:
             with open(subgraph_path, 'w', encoding='utf-8') as file:
                 file.write(formatted_xml)
 
+    DEFAULT_NB_CORES = 4
+
+    def print_archi_header(self):
+        """
+        Prints the header for the architecture file in SLAM format.
+        """
+        return """<?xml version="1.0" encoding="UTF-8"?>
+            <spirit:design xmlns:spirit="http://www.spiritconsortium.org/XMLSchema/SPIRIT/1.4">
+            <spirit:vendor>ietr</spirit:vendor>
+            <spirit:library>preesm</spirit:library>
+            <spirit:name>nf_archi</spirit:name>
+            <spirit:version>1</spirit:version>"""
+
+    def print_archi_footer(self):
+        """
+        Prints the footer for the architecture file in SLAM format.
+        """
+        return """</spirit:design>"""
+
+    def print_archi_nodes(self, nb_cores: dict) -> str:
+        """
+        Prints the nodes in the architecture file in SLAM format.
+
+        :param nb_cores: A dictionary mapping node types to the number of cores.
+        :return: A string containing the XML representation of the nodes.
+        """
+        xml_content = []
+        #  header for component instances
+        xml_content.append("""<spirit:componentInstances>""")
+
+        total_id = 0  # Initialize a total ID counter for unique hardware IDs
+        # Nodes
+        for node_type, cores in nb_cores.items():
+            for i in range(cores):
+                xml_content.append(f"""
+                <spirit:componentInstance>
+                    <spirit:instanceName>node_{node_type}_{i}</spirit:instanceName>
+                    <spirit:hardwareId>{total_id}</spirit:hardwareId>
+                    <spirit:componentRef spirit:library="" spirit:name="node_{node_type}" spirit:vendor="" spirit:version=""/>
+                    <spirit:configurableElementValues/>
+                </spirit:componentInstance>
+                """)
+                total_id += 1  # Increment the total ID counter for the next hardware ID
+
+        # Print Generic communication node
+        xml_content.append("""<spirit:componentInstance>
+            <spirit:instanceName>shared_mem</spirit:instanceName>
+            <spirit:hardwareId>0</spirit:hardwareId>
+            <spirit:componentRef spirit:library="" spirit:name="SHARED_MEM" spirit:vendor="" spirit:version=""/>
+            <spirit:configurableElementValues/>
+        </spirit:componentInstance>""")
+
+        # footer for component instances
+        xml_content.append("""</spirit:componentInstances>""")
+
+        # Vendor extensions for node types
+        xml_content.append("""<spirit:vendorExtensions>
+            <slam:componentDescriptions xmlns:slam="http://sourceforge.net/projects/dftools/slam">""")
+
+        for node_type, _ in nb_cores.items():
+            xml_content.append(f"""<slam:componentDescription slam:componentRef="node_{node_type}" slam:componentType="CPU" slam:refinement=""/>""")
+
+        xml_content.append("""<slam:componentDescription slam:componentRef="SHARED_MEM" slam:componentType="parallelComNode" slam:refinement="" slam:speed="1000000000"/>
+                </slam:componentDescriptions>
+                <slam:designDescription xmlns:slam="http://sourceforge.net/projects/dftools/slam">
+                    <slam:parameters/>
+                </slam:designDescription>
+            </spirit:vendorExtensions>""")
+
+        return "\n".join(xml_content)
+
+    def print_archi_links(self, nb_cores: dict) -> str:
+        xml_content = []
+
+        # Header for communication bus
+        xml_content.append("""<spirit:interconnections>""")
+
+        total_id = 0  # Initialize a total ID counter for unique bus IDs
+        for node_type, cores in nb_cores.items():
+            for i in range(cores):
+                xml_content.append(f"""
+                <spirit:interconnection>
+                    <spirit:name>{total_id}</spirit:name>
+                    <spirit:activeInterface spirit:busRef="shared_mem" spirit:componentRef="shared_mem"/>
+                    <spirit:activeInterface spirit:busRef="shared_mem" spirit:componentRef="node_{node_type}_{i}"/>
+                </spirit:interconnection>
+                """)
+                total_id += 1  # Increment the total ID counter for the next bus ID
+
+        xml_content.append(f"""</spirit:interconnections>
+            <spirit:vendorExtensions>
+                <slam:linkDescriptions xmlns:slam="http://sourceforge.net/projects/dftools/slam">""")
+
+        for i in range(total_id):
+            xml_content.append(f"""<slam:linkDescription slam:directedLink="undirected" slam:linkType="DataLink" slam:referenceId="{i}"/>""")
+
+        # Footer
+        xml_content.append("""</slam:linkDescriptions>
+            </spirit:vendorExtensions>""")
+
+        return "\n".join(xml_content)
+
+    def export_archi_to_files(self, folder_path: str, trace_df: pandas.DataFrame, nb_cores: dict | int = DEFAULT_NB_CORES) -> None:
+        """
+        Exports the architecture description to a file in SLAM format.
+
+        :param folder_path: The path to the folder where the architecture representation will be saved.
+        :param trace_df: The trace data as a pandas DataFrame.
+        :param nb_cores: The number of cores generated in the archi, or a dictionary mapping node types to core counts.
+        """
+        # Find the different type of HW nodes (for now, number of cores of the job) used in the trace data
+        node_types = trace_df['cpus'].unique()
+
+        # Prepare the number of cores for each node type
+        nb_cores_to_print = {}
+        if isinstance(nb_cores, int):
+            # If nb_cores is an integer, use it for all node types
+            nb_cores_to_print = {node_type: nb_cores for node_type in node_types}
+        elif isinstance(nb_cores, dict):
+            # If nb_cores is a dictionary, ensure it contains all node types
+            for node_type in node_types:
+                if node_type in nb_cores:
+                    nb_cores_to_print[node_type] = nb_cores[node_type]
+                else:
+                    nb_cores_to_print[node_type] = self.DEFAULT_NB_CORES
+
+        # Collect the XML content in a list
+        xml_content = []
+        xml_content.append(self.print_archi_header())
+
+        # Add component instances here if needed
+        xml_content.append(self.print_archi_nodes(nb_cores_to_print))
+
+        # Add communication bus
+        xml_content.append(self.print_archi_links(nb_cores_to_print))
+
+        # Print footer for the architecture file
+        xml_content.append(self.print_archi_footer())
+
+        # Join the XML content and remove unnecessary whitespace
+        raw_xml = "\n".join(xml_content)
+        raw_xml = "".join(line.strip() for line in raw_xml.splitlines())  # Remove all newlines and indentation
+
+        # Parse and format the XML using lxml.etree
+        archi_path = Path(folder_path, "archi.slam")
+        try:
+            root = etree.fromstring(raw_xml.encode("utf-8"))
+            formatted_xml = etree.tostring(root, pretty_print=True, encoding="unicode")
+        except etree.XMLSyntaxError as e:
+            raise ValueError(f"Error parsing architecture XML: {e}")
+
+        # Write the formatted XML to the file
+        with open(archi_path, 'w', encoding='utf-8') as file:
+            file.write(formatted_xml)
+
 
 if __name__ == "__main__":
     nf_report_path = Path("./dat/250515_241226_CELEBI/", "karol_241226_ult_2025-05-15_13_41_42")
@@ -627,7 +783,8 @@ if __name__ == "__main__":
     import_dag_from_mermaid_html.add_execution_counts_to_graph(dag, trace_df)
 
     # Export the DAG to PiSDF format and to a DOT file
-    pisdf_exporter = PisdfExporter(dag)
+    pisdf_exporter = PreesmExporter(dag)
     pisdf_exporter.transform_graph()
     export_dag_to_dot.export_to_dot(pisdf_exporter.graph, nf_report_path.with_name(nf_report_path.name + "_dag.dot"))
     pisdf_exporter.export_to_files(nf_report_path.with_name("Algo"))
+    pisdf_exporter.export_archi_to_files(nf_report_path.with_name("Archi"), trace_df, {32: 4, 16: 8, 1: 16, 4: 8})
