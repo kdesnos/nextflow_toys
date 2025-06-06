@@ -523,7 +523,8 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
 
 
 def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_threshold=15000,
-                                      is_resolved_name=False, print_info=False, trace_names=None):
+                                      is_resolved_name=False, print_info=False, trace_names=None,
+                                      use_tuple_weighting=True):
     """
     Extract an expression for predicting execution time as a function of the best parameters.
 
@@ -534,6 +535,7 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
     :param is_resolved_name: If True, treat process_name as a resolved process name.
     :param print_info: If True, print the current expression and RMSE during the process.
     :param trace_names: Optional list of trace names to filter the data. If None, all traces are included.
+    :param use_tuple_weighting: If True, weight observations based on parameter value tuples.
     :return: A dictionary containing the regression model, the expression, and evaluation metrics.
     """
     # Step 1: Retrieve varying pipeline parameters
@@ -572,8 +574,6 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
     y = merged_df["execution_time"].values
     selected_params = []
     selected_params_info = {}  # Dictionary to store parameter info (name and type)
-    all_expressions = []  # Store all expressions created during iterations
-    all_rmse = []  # Store all RMSE values
     rmse = float(2**31 - 1)  # Initialize with a large value
     expression = ""
     model = None
@@ -585,19 +585,44 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
         best_model = None
         best_expression = ""
         best_param_type = None
+        best_weights = None  # Store the best weights
+
+        # If no parameters are left to test, break the loop
+        if not available_params:
+            if print_info:
+                print("No more parameters available to test. Stopping.")
+            break
 
         # Test each available parameter
         for param in available_params:
             current_params = selected_params + [param]
             X = merged_df[current_params].values
 
-            # Fit a linear regression model
+            # Calculate observation weights based on parameter value tuples if enabled
+            weights = None
+            if use_tuple_weighting:
+                # Create tuple keys from parameter combinations
+                tuple_keys = merged_df[current_params].apply(tuple, axis=1)
+                # Count occurrences of each tuple
+                tuple_counts = tuple_keys.value_counts()
+                # Create weights inverse to the counts
+                weights = tuple_keys.map(lambda x: 1 / tuple_counts[x])
+
+            # Fit a linear regression model with optional weights
             temp_model = LinearRegression()
-            temp_model.fit(X, y)
+            temp_model.fit(X, y, sample_weight=weights)
 
             # Evaluate the model
             y_pred = temp_model.predict(X)
-            temp_rmse = np.sqrt(mean_squared_error(y, y_pred))
+
+            # For RMSE calculation, use the same weights if weighting is enabled
+            if use_tuple_weighting and weights is not None:
+                # Calculate weighted MSE manually
+                weighted_mse = np.average((y - y_pred) ** 2, weights=weights)
+                temp_rmse = np.sqrt(weighted_mse)
+                temp_rmse_unweighted = np.sqrt(mean_squared_error(y, y_pred))
+            else:
+                temp_rmse = np.sqrt(mean_squared_error(y, y_pred))
 
             # Round RMSE values for comparison
             rounded_temp_rmse = round(temp_rmse)
@@ -613,9 +638,11 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
                 or (rounded_temp_rmse == rounded_best_rmse and best_param_type == "Integer" and param_type == "Boolean")
             ):
                 best_rmse = temp_rmse
+                best_rmse_unweighted = temp_rmse_unweighted if use_tuple_weighting else None
                 best_param = param
                 best_model = temp_model
                 best_param_type = param_type
+                best_weights = weights  # Save the weights
                 coefficients = best_model.coef_
                 intercept = best_model.intercept_
                 best_expression = f"{intercept:.2f} + " + " + ".join(
@@ -625,7 +652,7 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
         # Stop if no improvement in RMSE
         if best_param is None or round(best_rmse) >= round(rmse):
             if print_info:
-                print(f"Best RMSE: {round(best_rmse):.0f} is not better than current RMSE: {round(rmse):.0f}. Stopping.")
+                print(f"Best{" weighted" if use_tuple_weighting else ""} RMSE: {round(best_rmse):.0f} is not better than current RMSE: {round(rmse):.0f}. Stopping.")
             break
 
         # Update the selected parameters and model if the best parameter improves the RMSE
@@ -640,14 +667,10 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
         model = best_model
         expression = best_expression
 
-        # Store this iteration's expression and RMSE
-        all_expressions.append(expression)
-        all_rmse.append(rmse)
-
         # Print the current expression and RMSE
         if print_info:
             print(f"Current expression: {expression}")
-            print(f"Current RMSE: {round(rmse):.0f}")
+            print(f"Current RMSE: {round(rmse):.0f}{f" (unweighted: {best_rmse_unweighted:.0f})" if use_tuple_weighting else ""}")
 
         # Stop if RMSE is below the threshold
         if rmse <= rmse_threshold:
@@ -655,14 +678,26 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
                 print(f"RMSE: {round(rmse):.0f} is below the threshold of {rmse_threshold}. Stopping.")
             break
 
-    return {
-        "model": model,
-        "expression": expression,
-        "all_expressions": all_expressions,
-        "all_rmse": all_rmse,
-        "rmse": rmse,
-        "selected_parameters": selected_params_info  # Now contains parameter names and types
-    }
+    # Update the model info to include weighting information
+    if use_tuple_weighting and best_weights is not None:
+        model_info = {
+            "model": model,
+            "expression": expression,
+            "rmse": best_rmse_unweighted,
+            "rmse_weighted": rmse,
+            "selected_parameters": selected_params_info,
+            "weighted_regression": True,
+            "unique_tuples_count": len(tuple_keys.value_counts()) if 'tuple_keys' in locals() else None
+        }
+    else:
+        model_info = {
+            "model": model,
+            "expression": expression,
+            "rmse": rmse,
+            "selected_parameters": selected_params_info
+        }
+
+    return model_info
 
 
 def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tolerance=0.1, trace_names=None):
