@@ -3,9 +3,13 @@ from pathlib import Path
 import networkx as nx
 import pandas
 import export_dag_to_dot
+import extract_from_nf_log
 import extract_trace_from_html
 import import_dag_from_mermaid_html
 from lxml import etree
+
+import nf_trace_db_analyzer
+from nf_trace_db_manager import NextflowTraceDBManager
 
 
 class PreesmExporter:
@@ -13,14 +17,21 @@ class PreesmExporter:
     A class to export a networkx.DiGraph to a PiSDF representation.
     """
 
-    def __init__(self, graph: nx.DiGraph):
+    def __init__(self, project_path: str, graph: nx.DiGraph):
         """
         Initializes the PisdfExporter with a directed graph.
 
+        :param project_path: The path to the project directory where the PiSDF files will be saved.
         :param graph: A networkx.DiGraph instance representing the graph to export.
         """
         if not isinstance(graph, nx.DiGraph):
             raise TypeError("The graph parameter must be an instance of networkx.DiGraph.")
+
+        # Create the project path with "Algo", "Archi", and "Scenarios" subfolders if they do not exist
+        self.project_path = Path(project_path)
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        for subfolder in ["Algo", "Archi", "Scenarios"]:
+            (self.project_path / subfolder).mkdir(parents=True, exist_ok=True)
         self.graph = nx.MultiDiGraph(graph)
         self.interface_counter = 0  # Counter for interface nodes
         self.hierarchical_counter = 0  # Counter for hierarchical actors
@@ -564,16 +575,14 @@ class PreesmExporter:
         snk_port = data.get('snk_port', 'u')
         return f"""<edge kind="fifo" source="{source_name}" sourceport="{src_port}" target="{target_name}" targetport="{snk_port}" type="uchar"/>"""
 
-    def export_to_files(self, folder_path: str):
+    def export_to_files(self):
         """
         Exports the directed graph to a file in PiSDF format.
-
-        :param folder_path: The path to the folder where the PiSDF representation will be saved.
         """
         subgraph_nodes = self.collect_subgraph_nodes()
         subgraph_edges = self.collect_subgraph_edges(subgraph_nodes)
         for subgraph_name, nodes in subgraph_nodes.items():
-            subgraph_path = Path(folder_path, f"{subgraph_name.replace(':', '_')}.pi")
+            subgraph_path = self.project_path / "Algo" / f"{subgraph_name.replace(':', '_')}.pi"
 
             # Collect the XML content in a string
             xml_content = []
@@ -712,16 +721,20 @@ class PreesmExporter:
 
         return "\n".join(xml_content)
 
-    def export_archi_to_files(self, folder_path: str, trace_df: pandas.DataFrame, nb_cores: dict | int = DEFAULT_NB_CORES) -> None:
+    def export_archi_to_files(self, db_manager: NextflowTraceDBManager, nb_cores: dict | int = DEFAULT_NB_CORES) -> dict:
         """
         Exports the architecture description to a file in SLAM format.
 
-        :param folder_path: The path to the folder where the architecture representation will be saved.
-        :param trace_df: The trace data as a pandas DataFrame.
+        :param db_manager: Nextflow database manager containing information on used CPUs.
         :param nb_cores: The number of cores generated in the archi, or a dictionary mapping node types to core counts.
+        :return: A dictionary mapping node types to the number of cores used in the architecture.
         """
         # Find the different type of HW nodes (for now, number of cores of the job) used in the trace data
-        node_types = trace_df['cpus'].unique()
+        node_types = set()
+        process_executions = db_manager.process_executions_manager.getAllProcessExecutions()
+        for execution in process_executions:
+            node_types.add(execution.nbCores)
+        node_types = list(node_types)  # Convert to list if needed
 
         # Prepare the number of cores for each node type
         nb_cores_to_print = {}
@@ -754,7 +767,7 @@ class PreesmExporter:
         raw_xml = "".join(line.strip() for line in raw_xml.splitlines())  # Remove all newlines and indentation
 
         # Parse and format the XML using lxml.etree
-        archi_path = Path(folder_path, "archi.slam")
+        archi_path = self.project_path / "Archi" / "archi.slam"
         try:
             root = etree.fromstring(raw_xml.encode("utf-8"))
             formatted_xml = etree.tostring(root, pretty_print=True, encoding="unicode")
@@ -765,6 +778,112 @@ class PreesmExporter:
         with open(archi_path, 'w', encoding='utf-8') as file:
             file.write(formatted_xml)
 
+        return nb_cores_to_print
+
+    def export_scenario_to_file(self, db_manager: NextflowTraceDBManager, nb_cores_printed: dict, process_timings: dict) -> None:
+        """
+        Exports the scenario description to a file in SLAM format.
+
+        :param nb_cores_printed: A dictionary mapping node types to the number of cores used in the architecture.
+        :param process_timings: A dictionary mapping process full names to their timings (as int).
+        """
+        scenario_path = self.project_path / "Scenarios" / "generated.scenario"
+
+        xml_content = []
+        xml_content.append(f"""<?xml version="1.0" encoding="UTF-8"?>
+            <scenario>
+                <flags>
+                    <sizesAreInBit/>
+                </flags>
+                <files>
+                    <algorithm url="/{self.project_path.name}/Algo/main.pi"/>
+                    <architecture url="/{self.project_path.name}/Archi/archi.slam"/>
+                    <codegenDirectory url="/{self.project_path.name}/Code/generated"/>
+                </files>
+                <constraints excelUrl="">""")
+
+        # Build a mapping of cpu types and associated processes
+        # This mapping will be used to create constraints in the scenario
+        process_to_cpu_mapping = db_manager.process_executions_manager.getProcessToCpuMapping(db_manager)
+
+        subgraph_nodes = self.collect_subgraph_nodes()
+
+        # Map process names to complete actor paths and names
+        process_paths = {}
+        all_cores_process = []
+        for subgraph_name, nodes in subgraph_nodes.items():
+            for node in nodes:
+                data = self.graph.nodes[node]
+                path = f"{subgraph_name.replace(":", "/")}/{data['actor_name']}"
+                if data.get('type') == 'process':
+                    process = f"{subgraph_name[5:] + ":" if subgraph_name != "main" else ""}{data['name']}"
+                    process_paths[path] = process
+                elif data.get('type') == 'operator' or data.get('type') == 'factory':
+                    all_cores_process.append(path)
+        # Add all core processes to the process paths
+
+        # Print constraints for each core
+        for core_type, nb_core in nb_cores_printed.items():
+            for i in range(nb_core):
+                node_name = f"node_{core_type}_{i}"
+                xml_content.append(f"""<constraintGroup>
+                        <operator name="{node_name}"/>""")
+
+                # Print all actors for this core type
+                eligible_processes = [process for process in process_to_cpu_mapping.get(core_type, [])]
+                eligible_path = [path for path, process in process_paths.items() if process in eligible_processes]
+
+                for path in eligible_path:
+                    xml_content.append(f'<task name="{path}"/>')
+
+                # Add all core processes to the constraint group
+                for process in all_cores_process:
+                    xml_content.append(f'<task name="{process}"/>')
+
+                xml_content.append("""</constraintGroup>""")
+
+        # Add timings
+
+        xml_content.append(f"""</constraints>
+                <timings excelUrl="">
+                    <memcpyspeed opname="x86" setuptime="1" timeperunit="3.3333334E-5"/>
+                </timings>""")
+
+        # Add simulation parameters
+        default_core = f"node_{list(nb_cores_printed.keys())[0]}_0"
+        xml_content.append(f"""<simuParams>
+                    <mainCore>{default_core}</mainCore>
+                    <mainComNode>shared_mem</mainComNode>
+                    <averageDataSize>1000</averageDataSize>
+                    <dataTypes>
+                        <dataType name="uchar" size="8"/>
+                    </dataTypes>
+                    <specialVertexOperators>
+                        <specialVertexOperator path="{default_core}"/>
+                    </specialVertexOperators>
+                </simuParams>
+                <parameterValues/>
+                <papifyConfigs xmlUrl=""/>
+                <energyConfigs xmlUrl="">
+                    <performanceObjective objectiveEPS="0.0"/>
+                    <peActorsEnergy/>
+                </energyConfigs>
+            </scenario>""")
+
+        # Join the XML content and remove unnecessary whitespace
+        raw_xml = "\n".join(xml_content)
+        raw_xml = "".join(line.strip() for line in raw_xml.splitlines())  # Remove all newlines and indentation
+
+        try:
+            root = etree.fromstring(raw_xml.encode("utf-8"))
+            formatted_xml = etree.tostring(root, pretty_print=True, encoding="unicode")
+        except etree.XMLSyntaxError as e:
+            raise ValueError(f"Error parsing architecture XML: {e}")
+
+        # Write the formatted XML to the file
+        with open(scenario_path, 'w', encoding='utf-8') as file:
+            file.write(formatted_xml)
+
 
 if __name__ == "__main__":
     nf_report_path = Path("./dat/250515_241226_CELEBI/", "karol_241226_ult_2025-05-15_13_41_42")
@@ -772,19 +891,35 @@ if __name__ == "__main__":
     # Create the HTML and DAG files
     html_report = nf_report_path.with_name(nf_report_path.name + "_report.html")
     dag_report = nf_report_path.with_name(nf_report_path.name + "_dag.html")
+    log_report = nf_report_path.with_name(nf_report_path.name + "_log.log")
 
     # Get the trace data from the HTML report
-    trace_df = extract_trace_from_html.extract_trace_data(html_report)
+    XXXXXXXXXXXXXXXXXX = extract_trace_from_html.extract_trace_data(html_report)
 
     # Import the DAG from the Mermaid report
     dag = import_dag_from_mermaid_html.extract_mermaid_graph(dag_report)
 
     # Add the number of executions of each process to the graph
-    import_dag_from_mermaid_html.add_execution_counts_to_graph(dag, trace_df)
+    import_dag_from_mermaid_html.add_execution_counts_to_graph(dag, XXXXXXXXXXXXXXXXXX)
+
+    # Get the database manager for the Nextflow trace (assumed pre-existing)
+    db_manager = NextflowTraceDBManager("./dat/nf_trace_db.sqlite")
+    db_manager.connect()
 
     # Export the DAG to PiSDF format and to a DOT file
-    pisdf_exporter = PreesmExporter(dag)
-    pisdf_exporter.transform_graph()
-    export_dag_to_dot.export_to_dot(pisdf_exporter.graph, nf_report_path.with_name(nf_report_path.name + "_dag.dot"))
-    pisdf_exporter.export_to_files(nf_report_path.with_name("Algo"))
-    pisdf_exporter.export_archi_to_files(nf_report_path.with_name("Archi"), trace_df, {32: 4, 16: 8, 1: 16, 4: 8})
+    preesm_exporter = PreesmExporter(nf_report_path.with_name("nextflow_toy"), dag)
+    preesm_exporter.transform_graph()
+    export_dag_to_dot.export_to_dot(preesm_exporter.graph, nf_report_path.with_name(nf_report_path.name + "_dag.dot"))
+    preesm_exporter.export_to_files()
+    nb_cores_printed = preesm_exporter.export_archi_to_files(db_manager, {32: 4, 16: 8, 1: 16, 4: 8})
+
+    param_values = extract_from_nf_log.extractPipelineParameters(log_report)
+    stats_df, regression_df = nf_trace_db_analyzer.build_execution_predictors(db_manager)
+    predictions = nf_trace_db_analyzer.predict_time_from_param_values(
+        db_manager,
+        stats_based_config=stats_df,
+        model_based_config=regression_df,
+        pipeline_params_df=param_values)
+
+    print(predictions)
+    preesm_exporter.export_scenario_to_file(db_manager, nb_cores_printed, predictions)

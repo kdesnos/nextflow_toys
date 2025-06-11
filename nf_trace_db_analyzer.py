@@ -882,6 +882,118 @@ def build_execution_predictors(db_manager, trace_names=None):
     return stats_based_config, model_based_config
 
 
+def predict_time_from_param_values(db_manager, stats_based_config, model_based_config, pipeline_params_df):
+    """
+    Predicts execution times for processes based on pipeline parameters.
+
+    :param db_manager: An instance of NextflowTraceDBManager used to retrieve resolved process names
+    :param stats_based_config: DataFrame from build_execution_predictors containing statistics for processes
+                              with constant execution times
+    :param model_based_config: DataFrame from build_execution_predictors containing regression models
+                              for processes with variable execution times
+    :param pipeline_params_df: DataFrame from extractPipelineParameters containing parameter values
+    :return: DataFrame with process names and their predicted execution times
+    """
+    # Convert pipeline parameters to a dictionary for easier lookup
+    param_values = {}
+    for _, row in pipeline_params_df.iterrows():
+        param_name = row['param_name']
+        # Always use reformatted value (assuming it's always available)
+        value = row['reformatted_value']
+
+        # Only convert Boolean values to 0/1 format for model compatibility
+        if row['type'] == 'Boolean' and isinstance(value, bool):
+            value = 1 if value else 0
+
+        param_values[param_name] = value
+
+    predictions = []
+
+    # Process statistics-based predictions (constant times)
+    if stats_based_config is not None and not stats_based_config.empty:
+        for _, row in stats_based_config.iterrows():
+            mean_time = row['mean_time']
+            std_dev = row['std_dev_time']
+
+            predictions.append({
+                'process_name': row['process_name'],
+                'predicted_time': mean_time,
+                'rmse': std_dev,  # Use std_dev as the uncertainty measure, like RMSE
+                'confidence_interval': [
+                    max(0, mean_time - 2 * std_dev),  # Lower bound (prevent negative times)
+                    mean_time + 2 * std_dev           # Upper bound
+                ]
+            })
+
+    # Process model-based predictions (variable times)
+    if model_based_config is not None and not model_based_config.empty:
+        processed_models = []
+
+        for _, row in model_based_config.iterrows():
+            process_name = row['process_name']
+            model_info = row['model']
+            trace_significant = row['trace_significant']
+            resolved_significant = row['resolved_significant']
+            processed_models.append(process_name)
+
+            # Add prediction for this process
+            add_model_prediction(predictions, process_name, model_info, param_values)
+
+            # Add predictions for resolved processes if this is a process-level model
+            if db_manager is not None and trace_significant and not resolved_significant:
+                # Get all resolved process names for this process
+                rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(process_name)
+
+                for rp in rp_list:
+                    # Skip if this resolved process already has a model
+                    if rp.name in processed_models:
+                        continue
+
+                    # Add a prediction for this resolved process using the same model
+                    add_model_prediction(predictions, rp.name, model_info, param_values)
+
+    # Convert to DataFrame and return
+    predictions_df = pd.DataFrame(predictions)
+
+    # Add formatted time columns if predictions were successful
+    if 'predicted_time' in predictions_df.columns:
+        # Convert milliseconds to readable format (HH:MM:SS)
+        def format_ms(ms):
+            if pd.isna(ms):
+                return None
+            seconds = ms / 1000
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+        predictions_df['formatted_time'] = predictions_df['predicted_time'].apply(format_ms)
+
+    return predictions_df
+
+
+def add_model_prediction(predictions, process_name, model_info, param_values):
+    """Helper function to add a model-based prediction to the predictions list"""
+    model = model_info['model']
+    rmse = model_info['rmse']
+    selected_params = list(model_info['selected_parameters'].keys())
+
+    # Prepare input array for prediction
+    X_pred = np.array([[param_values.get(param, 0) for param in selected_params]])
+
+    # Make prediction
+    predicted_time = model.predict(X_pred)[0]
+    predictions.append({
+        'process_name': process_name,
+        'predicted_time': predicted_time,
+        'rmse': rmse,
+        'confidence_interval': [
+            max(0, predicted_time - 2 * rmse),  # Lower bound (prevent negative times)
+            predicted_time + 2 * rmse           # Upper bound
+        ]
+    })
+
+
 if __name__ == "__main__":
     skip_load_files = True
     # List of HTML and log file paths to load into the database

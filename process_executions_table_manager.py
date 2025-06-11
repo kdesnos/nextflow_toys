@@ -205,6 +205,36 @@ class ProcessExecutionTableManager:
         else:
             return pd.DataFrame()
 
+    def getProcessToCpuMapping(self, db_manager=None):
+        """
+        Builds a mapping between CPU core counts and the resolved process names that ran on them.
+
+        :param db_manager: An instance of NextflowTraceDBManager (not used in this implementation).
+        :return: A dictionary where keys are core counts and values are lists of resolved process names.
+        """
+        # Build a mapping of cpu types and associated processes
+        process_to_cpu_mapping = {}
+
+        # Direct SQL query to get the mapping
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT pe.nbCores, rpn.name
+            FROM ProcessExecutions pe
+            JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
+            GROUP BY pe.nbCores, rpn.name
+            ORDER BY pe.nbCores
+        """)
+
+        rows = cursor.fetchall()
+
+        # Transform query results into the desired dictionary format
+        for core_id, actor_name in rows:
+            if core_id not in process_to_cpu_mapping:
+                process_to_cpu_mapping[core_id] = []
+            process_to_cpu_mapping[core_id].append(actor_name)
+
+        return process_to_cpu_mapping
+
 
 class ProcessExecutionEntry:
     def __init__(self, eId, tId, rId, instance, hash, time, cpu, nbCores):
