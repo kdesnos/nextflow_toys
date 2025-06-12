@@ -14,10 +14,10 @@ def export_to_dot(G: nx.MultiDiGraph, output_path: Path):
 
     def write_node(file, node, data, level=0):
         actor_name = data['name']
-        inputs = [f"<i{i + 1}>{f" {edge[3]['sdf_cons']:.0f}" if edge[3]['sdf_cons']
-                               is not None else ""}" for i, edge in enumerate(G.in_edges(node, keys=True, data=True))]
-        outputs = [f"<o{i + 1}>{f" {edge[3]['sdf_prod']:.0f}" if edge[3]['sdf_prod']
-                                is not None else ""}" for i, edge in enumerate(G.out_edges(node, keys=True, data=True))]
+        inputs = [f"<i{i + 1}>{f" {edge[3]['sdf_cons']:.0f}" if 'sdf_cons' in edge[3]
+                               else ""}" for i, edge in enumerate(G.in_edges(node, keys=True, data=True))]
+        outputs = [f"<o{i + 1}>{f" {edge[3]['sdf_prod']:.0f}" if 'sdf_prod' in edge[3]
+                                else ""}" for i, edge in enumerate(G.out_edges(node, keys=True, data=True))]
         inputs_str = " | ".join(inputs)
         outputs_str = " | ".join(outputs)
         file.write(f'\t{"  " * level}{node}[label="{{{actor_name}}} | {{{{ {inputs_str} }} | x{data["nb_exec"]} | {{ {outputs_str} }}}}"')

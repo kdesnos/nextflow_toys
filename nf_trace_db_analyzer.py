@@ -886,13 +886,22 @@ def predict_time_from_param_values(db_manager, stats_based_config, model_based_c
     """
     Predicts execution times for processes based on pipeline parameters.
 
-    :param db_manager: An instance of NextflowTraceDBManager used to retrieve resolved process names
+    This function combines statistical predictions for processes with constant execution times
+    and model-based predictions for processes with variable execution times dependent on
+    pipeline parameters.
+
+    :param db_manager: An instance of NextflowTraceDBManager used to retrieve resolved process names.
+                      Can be None if no resolved process names need to be retrieved.
     :param stats_based_config: DataFrame from build_execution_predictors containing statistics for processes
-                              with constant execution times
+                              with constant execution times. Contains columns 'process_name', 'mean_time',
+                              'std_dev_time', etc.
     :param model_based_config: DataFrame from build_execution_predictors containing regression models
-                              for processes with variable execution times
-    :param pipeline_params_df: DataFrame from extractPipelineParameters containing parameter values
-    :return: DataFrame with process names and their predicted execution times
+                              for processes with variable execution times. Contains columns 'process_name',
+                              'model', 'trace_significant', etc.
+    :param pipeline_params_df: DataFrame from extractPipelineParameters containing parameter values.
+                              Must have columns 'param_name', 'reformatted_value', and 'type'.
+    :return: DataFrame with process names and their predicted execution times, including columns:
+             'process_name', 'predicted_time', 'rmse', 'confidence_interval', and 'formatted_time'.
     """
     # Convert pipeline parameters to a dictionary for easier lookup
     param_values = {}
@@ -908,15 +917,21 @@ def predict_time_from_param_values(db_manager, stats_based_config, model_based_c
         param_values[param_name] = value
 
     predictions = []
+    processed_stats = []  # Track processes that already have statistics-based predictions
 
     # Process statistics-based predictions (constant times)
     if stats_based_config is not None and not stats_based_config.empty:
         for _, row in stats_based_config.iterrows():
+            process_name = row['process_name']
             mean_time = row['mean_time']
             std_dev = row['std_dev_time']
+            trace_significant = row.get('trace_significant', False)
+            resolved_significant = row.get('resolved_significant', False)
+
+            processed_stats.append(process_name)
 
             predictions.append({
-                'process_name': row['process_name'],
+                'process_name': process_name,
                 'predicted_time': mean_time,
                 'rmse': std_dev,  # Use std_dev as the uncertainty measure, like RMSE
                 'confidence_interval': [
@@ -924,6 +939,28 @@ def predict_time_from_param_values(db_manager, stats_based_config, model_based_c
                     mean_time + 2 * std_dev           # Upper bound
                 ]
             })
+
+            # Add predictions for resolved processes if this is a process-level statistic
+            if db_manager is not None and not trace_significant and not resolved_significant:
+                # Get all resolved process names for this process
+                rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(process_name)
+
+                for rp in rp_list:
+                    # Skip if this resolved process already has statistics
+                    if rp.name in processed_stats:
+                        continue
+
+                    # Add a prediction for this resolved process using the same statistics
+                    predictions.append({
+                        'process_name': rp.name,
+                        'predicted_time': mean_time,
+                        'rmse': std_dev,
+                        'confidence_interval': [
+                            max(0, mean_time - 2 * std_dev),
+                            mean_time + 2 * std_dev
+                        ]
+                    })
+                    processed_stats.append(rp.name)
 
     # Process model-based predictions (variable times)
     if model_based_config is not None and not model_based_config.empty:

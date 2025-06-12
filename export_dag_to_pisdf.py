@@ -17,24 +17,34 @@ class PreesmExporter:
     A class to export a networkx.DiGraph to a PiSDF representation.
     """
 
-    def __init__(self, project_path: str, graph: nx.DiGraph):
+    def __init__(self, project_path: str, db_manager, stub_report_path, html_dag_path):
         """
         Initializes the PisdfExporter with a directed graph.
 
         :param project_path: The path to the project directory where the PiSDF files will be saved.
         :param graph: A networkx.DiGraph instance representing the graph to export.
         """
-        if not isinstance(graph, nx.DiGraph):
-            raise TypeError("The graph parameter must be an instance of networkx.DiGraph.")
-
         # Create the project path with "Algo", "Archi", and "Scenarios" subfolders if they do not exist
         self.project_path = Path(project_path)
         self.project_path.mkdir(parents=True, exist_ok=True)
         for subfolder in ["Algo", "Archi", "Scenarios"]:
             (self.project_path / subfolder).mkdir(parents=True, exist_ok=True)
-        self.graph = nx.MultiDiGraph(graph)
+        self.db_manager = db_manager
         self.interface_counter = 0  # Counter for interface nodes
         self.hierarchical_counter = 0  # Counter for hierarchical actors
+
+        # Get the trace data from the HTML report
+        trace_df = extract_trace_from_html.extract_trace_data(stub_report_path)
+
+        # Import the DAG from the Mermaid report
+        graph = import_dag_from_mermaid_html.extract_mermaid_graph(html_dag_path)
+
+        # Add the number of executions of each process to the graph
+        import_dag_from_mermaid_html.add_execution_counts_to_graph(graph, trace_df)
+        self.graph = nx.MultiDiGraph(graph)
+
+        # Make it SDF-ready
+        self.transform_graph()
 
     def transform_graph(self):
         """
@@ -575,7 +585,7 @@ class PreesmExporter:
         snk_port = data.get('snk_port', 'u')
         return f"""<edge kind="fifo" source="{source_name}" sourceport="{src_port}" target="{target_name}" targetport="{snk_port}" type="uchar"/>"""
 
-    def export_to_files(self):
+    def export_dataflow_files(self):
         """
         Exports the directed graph to a file in PiSDF format.
         """
@@ -721,7 +731,7 @@ class PreesmExporter:
 
         return "\n".join(xml_content)
 
-    def export_archi_to_files(self, db_manager: NextflowTraceDBManager, nb_cores: dict | int = DEFAULT_NB_CORES) -> dict:
+    def export_archi_to_files(self, nb_cores: dict | int = DEFAULT_NB_CORES) -> dict:
         """
         Exports the architecture description to a file in SLAM format.
 
@@ -731,7 +741,7 @@ class PreesmExporter:
         """
         # Find the different type of HW nodes (for now, number of cores of the job) used in the trace data
         node_types = set()
-        process_executions = db_manager.process_executions_manager.getAllProcessExecutions()
+        process_executions = self.db_manager.process_executions_manager.getAllProcessExecutions()
         for execution in process_executions:
             node_types.add(execution.nbCores)
         node_types = list(node_types)  # Convert to list if needed
@@ -780,7 +790,7 @@ class PreesmExporter:
 
         return nb_cores_to_print
 
-    def export_scenario_to_file(self, db_manager: NextflowTraceDBManager, nb_cores_printed: dict, process_timings: dict) -> None:
+    def export_scenario_to_file(self, nb_cores_printed: dict, process_timings: dict) -> None:
         """
         Exports the scenario description to a file in SLAM format.
 
@@ -804,7 +814,9 @@ class PreesmExporter:
 
         # Build a mapping of cpu types and associated processes
         # This mapping will be used to create constraints in the scenario
-        process_to_cpu_mapping = db_manager.process_executions_manager.getProcessToCpuMapping(db_manager)
+        # There might be more process in the the process_to_cpu_mapping than in current graph, as it is build
+        # from the database, not from the graph
+        process_to_cpu_mapping = self.db_manager.process_executions_manager.getProcessToCpuMapping(self.db_manager)
 
         subgraph_nodes = self.collect_subgraph_nodes()
 
@@ -816,11 +828,10 @@ class PreesmExporter:
                 data = self.graph.nodes[node]
                 path = f"{subgraph_name.replace(":", "/")}/{data['actor_name']}"
                 if data.get('type') == 'process':
-                    process = f"{subgraph_name[5:] + ":" if subgraph_name != "main" else ""}{data['name']}"
+                    process = f"{subgraph_name[5:] + ':' if subgraph_name != "main" else ""}{data['name']}"
                     process_paths[path] = process
                 elif data.get('type') == 'operator' or data.get('type') == 'factory':
                     all_cores_process.append(path)
-        # Add all core processes to the process paths
 
         # Print constraints for each core
         for core_type, nb_core in nb_cores_printed.items():
@@ -843,14 +854,32 @@ class PreesmExporter:
                 xml_content.append("""</constraintGroup>""")
 
         # Add timings
-
         xml_content.append(f"""</constraints>
                 <timings excelUrl="">
-                    <memcpyspeed opname="x86" setuptime="1" timeperunit="3.3333334E-5"/>
-                </timings>""")
+                    <memcpyspeed opname="x86" setuptime="1" timeperunit="3.3333334E-5"/>""")
+
+        # Print timing per process
+        for path, process in process_paths.items():
+            core_type = next((key for key, value in process_to_cpu_mapping.items() if process in value))
+            node_type = f"node_{core_type}"
+
+            timings = process_timings.loc[process_timings['process_name'] == process, 'predicted_time']
+            if timings.empty:
+                print(f"Warning: No timing found for process {process}, setting timing to 1")
+
+            timing = timings.iloc[0] if not timings.empty else 1  # Default to 1 if no timing is found
+            xml_content.append(f'<timing opname="{node_type}" time="{timing:.0f}" timingtype="EXECUTION_TIME" vertexname="{path}"/>')
+
+        # For actors in all_cores_process, add a default timing for each core type
+        for process in all_cores_process:
+            for core_type in nb_cores_printed.keys():
+                node_type = f"node_{core_type}"
+                xml_content.append(f'<timing opname="{node_type}" time="1" timingtype="EXECUTION_TIME" vertexname="{process}"/>')
+
+        xml_content.append("""</timings>""")
 
         # Add simulation parameters
-        default_core = f"node_{list(nb_cores_printed.keys())[0]}_0"
+        default_core = f"node_{min(list(nb_cores_printed.keys()))}_0"
         xml_content.append(f"""<simuParams>
                     <mainCore>{default_core}</mainCore>
                     <mainComNode>shared_mem</mainComNode>
@@ -858,9 +887,14 @@ class PreesmExporter:
                     <dataTypes>
                         <dataType name="uchar" size="8"/>
                     </dataTypes>
-                    <specialVertexOperators>
-                        <specialVertexOperator path="{default_core}"/>
-                    </specialVertexOperators>
+                    <specialVertexOperators>""")
+
+        # Allow special vertex operators on all cores
+        for core_type, nb_cores in nb_cores_printed.items():
+            for i in range(nb_cores):
+                xml_content.append(f"""<specialVertexOperator path="node_{core_type}_{i}"/>""")
+
+        xml_content.append("""</specialVertexOperators>
                 </simuParams>
                 <parameterValues/>
                 <papifyConfigs xmlUrl=""/>
@@ -884,42 +918,58 @@ class PreesmExporter:
         with open(scenario_path, 'w', encoding='utf-8') as file:
             file.write(formatted_xml)
 
+    def export_preesm_project(self, log_report_path, nb_cores: int | dict = DEFAULT_NB_CORES) -> None:
+        """
+        Exports the Nextflow pipeline to a complete PREESM project.
+
+        This method orchestrates the export of dataflow files, architecture files, and scenario files
+        to create a complete PREESM project that can be imported into the PREESM IDE. It also predicts
+        execution times based on historical data from the trace database.
+
+        :param log_report_path: Path to the Nextflow log file used to extract pipeline parameters.
+        :param nb_cores: The number of cores to use in the architecture, either as a fixed integer
+                         for all node types or as a dictionary mapping node types to core counts.
+                         Defaults to DEFAULT_NB_CORES.
+        """
+        self.db_manager.connect()
+
+        param_values = extract_from_nf_log.extractPipelineParameters(log_report_path)
+        stats_df, regression_df = nf_trace_db_analyzer.build_execution_predictors(self.db_manager)
+
+        predictions = nf_trace_db_analyzer.predict_time_from_param_values(
+            self.db_manager,
+            stats_based_config=stats_df,
+            model_based_config=regression_df,
+            pipeline_params_df=param_values)
+
+        self.export_dataflow_files()
+        nb_cores_printed = self.export_archi_to_files(nb_cores)
+        self.export_scenario_to_file(nb_cores_printed, predictions)
+
+        self.db_manager.close()
+
 
 if __name__ == "__main__":
+    # Define path to the Nextflow execution report directory
     nf_report_path = Path("./dat/250515_241226_CELEBI/", "karol_241226_ult_2025-05-15_13_41_42")
 
-    # Create the HTML and DAG files
+    # Create paths to the HTML report, DAG visualization, and log file
     html_report = nf_report_path.with_name(nf_report_path.name + "_report.html")
     dag_report = nf_report_path.with_name(nf_report_path.name + "_dag.html")
     log_report = nf_report_path.with_name(nf_report_path.name + "_log.log")
 
-    # Get the trace data from the HTML report
-    XXXXXXXXXXXXXXXXXX = extract_trace_from_html.extract_trace_data(html_report)
-
-    # Import the DAG from the Mermaid report
-    dag = import_dag_from_mermaid_html.extract_mermaid_graph(dag_report)
-
-    # Add the number of executions of each process to the graph
-    import_dag_from_mermaid_html.add_execution_counts_to_graph(dag, XXXXXXXXXXXXXXXXXX)
-
-    # Get the database manager for the Nextflow trace (assumed pre-existing)
+    # Initialize the database manager for the Nextflow trace
     db_manager = NextflowTraceDBManager("./dat/nf_trace_db.sqlite")
-    db_manager.connect()
 
-    # Export the DAG to PiSDF format and to a DOT file
-    preesm_exporter = PreesmExporter(nf_report_path.with_name("nextflow_toy"), dag)
-    preesm_exporter.transform_graph()
+    # Create a PREESM exporter and export the pipeline to PREESM project format
+    preesm_exporter = PreesmExporter(
+        nf_report_path.with_name("nextflow_toy"),
+        db_manager=db_manager,
+        stub_report_path=html_report,
+        html_dag_path=dag_report)
+
+    # Also export the graph to DOT format for visualization
     export_dag_to_dot.export_to_dot(preesm_exporter.graph, nf_report_path.with_name(nf_report_path.name + "_dag.dot"))
-    preesm_exporter.export_to_files()
-    nb_cores_printed = preesm_exporter.export_archi_to_files(db_manager, {32: 4, 16: 8, 1: 16, 4: 8})
 
-    param_values = extract_from_nf_log.extractPipelineParameters(log_report)
-    stats_df, regression_df = nf_trace_db_analyzer.build_execution_predictors(db_manager)
-    predictions = nf_trace_db_analyzer.predict_time_from_param_values(
-        db_manager,
-        stats_based_config=stats_df,
-        model_based_config=regression_df,
-        pipeline_params_df=param_values)
-
-    print(predictions)
-    preesm_exporter.export_scenario_to_file(db_manager, nb_cores_printed, predictions)
+    # Export the complete PREESM project with specified core configurations
+    preesm_exporter.export_preesm_project(log_report, nb_cores={1: 4, 16: 2, 32: 4})
