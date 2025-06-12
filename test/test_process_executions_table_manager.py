@@ -42,7 +42,8 @@ class TestProcessExecutionTableManager(unittest.TestCase):
 
     def test_addProcessExecution(self):
         execution_entry = ProcessExecutionEntry(
-            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45, cpu="Intel Core i7", nbCores=4
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1",
+            time=123.45, cpu="Intel Core i7", nbCores=4, memory=1024.5
         )
         self.execution_manager.addProcessExecution(execution_entry)
         self.assertNotEqual(execution_entry.eId, 0)  # eId should be updated after insertion
@@ -53,14 +54,28 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertEqual(retrieved_execution.cpu, "Intel Core i7")
 
         # Verify the nbCores value
-        retrieved_execution = self.execution_manager.getProcessExecutionByHash("hash1")
-        self.assertIsNotNone(retrieved_execution)
         self.assertEqual(retrieved_execution.nbCores, 4)
+
+        # Verify the memory value
+        self.assertEqual(retrieved_execution.memory, 1024.5)
+
+    def test_addProcessExecutionWithNullMemory(self):
+        execution_entry = ProcessExecutionEntry(
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash_null_mem",
+            time=123.45, cpu="Intel Core i7", nbCores=4, memory=None
+        )
+        self.execution_manager.addProcessExecution(execution_entry)
+
+        retrieved_execution = self.execution_manager.getProcessExecutionByHash("hash_null_mem")
+        self.assertIsNotNone(retrieved_execution)
+        self.assertIsNone(retrieved_execution.memory)
 
     def test_addAllProcessExecutions(self):
         executions = [
-            ProcessExecutionEntry(eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45, cpu="Intel Core i5", nbCores=2),
-            ProcessExecutionEntry(eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2, hash="hash2", time=456.78, cpu="AMD Ryzen 7", nbCores=8),
+            ProcessExecutionEntry(eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1,
+                                  hash="hash1", time=123.45, cpu="Intel Core i5", nbCores=2, memory=512.3),
+            ProcessExecutionEntry(eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2,
+                                  hash="hash2", time=456.78, cpu="AMD Ryzen 7", nbCores=8, memory=2048.7),
         ]
         self.execution_manager.addAllProcessExecutions(executions)
 
@@ -70,13 +85,16 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertEqual(all_executions[0].hash, "hash1")
         self.assertEqual(all_executions[0].cpu, "Intel Core i5")
         self.assertEqual(all_executions[0].nbCores, 2)
+        self.assertEqual(all_executions[0].memory, 512.3)
         self.assertEqual(all_executions[1].hash, "hash2")
         self.assertEqual(all_executions[1].cpu, "AMD Ryzen 7")
         self.assertEqual(all_executions[1].nbCores, 8)
+        self.assertEqual(all_executions[1].memory, 2048.7)
 
     def test_getProcessExecutionByHash(self):
         execution_entry = ProcessExecutionEntry(
-            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45, cpu="Intel Core i9", nbCores=6
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1,
+            hash="hash1", time=123.45, cpu="Intel Core i9", nbCores=6, memory=1536.0
         )
         self.execution_manager.addProcessExecution(execution_entry)
 
@@ -85,14 +103,17 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertEqual(retrieved_execution.hash, "hash1")
         self.assertEqual(retrieved_execution.cpu, "Intel Core i9")
         self.assertEqual(retrieved_execution.nbCores, 6)
+        self.assertEqual(retrieved_execution.memory, 1536.0)
 
     def test_getExecutionByResolvedIdAndInstanceAndTraceId(self):
         # Add process executions to the database
         execution_entry_1 = ProcessExecutionEntry(
-            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45, cpu="Intel Core i7", nbCores=4
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1,
+            hash="hash1", time=123.45, cpu="Intel Core i7", nbCores=4, memory=768.2
         )
         execution_entry_2 = ProcessExecutionEntry(
-            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2, hash="hash2", time=456.78, cpu="AMD Ryzen 7", nbCores=8
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2,
+            hash="hash2", time=456.78, cpu="AMD Ryzen 7", nbCores=8, memory=4096.0
         )
         self.execution_manager.addProcessExecution(execution_entry_1)
         self.execution_manager.addProcessExecution(execution_entry_2)
@@ -105,6 +126,7 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertEqual(retrieved_execution_1.hash, "hash1")
         self.assertEqual(retrieved_execution_1.instance, 1)
         self.assertEqual(retrieved_execution_1.nbCores, 4)
+        self.assertEqual(retrieved_execution_1.memory, 768.2)
 
         # Retrieve the second execution by resolved ID and instance
         retrieved_execution_2 = self.execution_manager.getExecutionByResolvedIdAndInstanceAndTraceId(
@@ -113,6 +135,8 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertIsNotNone(retrieved_execution_2)
         self.assertEqual(retrieved_execution_2.hash, "hash2")
         self.assertEqual(retrieved_execution_2.instance, 2)
+        self.assertEqual(retrieved_execution_2.memory, 4096.0)
+
         # Attempt to retrieve a non-existent execution
         non_existent_execution = self.execution_manager.getExecutionByResolvedIdAndInstanceAndTraceId(
             self.resolved_entry.rId, 3, self.trace_entry.tId
@@ -122,22 +146,26 @@ class TestProcessExecutionTableManager(unittest.TestCase):
     def test_addProcessExecutionWithInvalidTraceOrResolvedProcess(self):
         # Attempt to add a process execution with an invalid tId
         invalid_trace_execution = ProcessExecutionEntry(
-            eId=0, tId=999, rId=self.resolved_entry.rId, instance=1, hash="invalid_trace_hash", time=123.45, cpu="Intel Core i7", nbCores=6
+            eId=0, tId=999, rId=self.resolved_entry.rId, instance=1,
+            hash="invalid_trace_hash", time=123.45, cpu="Intel Core i7", nbCores=6, memory=1024.0
         )
         with self.assertRaises(sqlite3.IntegrityError):
             self.execution_manager.addProcessExecution(invalid_trace_execution)
 
         # Attempt to add a process execution with an invalid rId
         invalid_resolved_execution = ProcessExecutionEntry(
-            eId=0, tId=self.trace_entry.tId, rId=999, instance=1, hash="invalid_resolved_hash", time=123.45, cpu="Intel Core i7", nbCores=6
+            eId=0, tId=self.trace_entry.tId, rId=999, instance=1,
+            hash="invalid_resolved_hash", time=123.45, cpu="Intel Core i7", nbCores=6, memory=2048.0
         )
         with self.assertRaises(sqlite3.IntegrityError):
             self.execution_manager.addProcessExecution(invalid_resolved_execution)
 
     def test_getAllProcessExecutions(self):
         executions = [
-            ProcessExecutionEntry(eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45, cpu="Intel Core i5", nbCores=2),
-            ProcessExecutionEntry(eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2, hash="hash2", time=456.78, cpu="AMD Ryzen 7", nbCores=8),
+            ProcessExecutionEntry(eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1,
+                                  hash="hash1", time=123.45, cpu="Intel Core i5", nbCores=2, memory=512.0),
+            ProcessExecutionEntry(eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2,
+                                  hash="hash2", time=456.78, cpu="AMD Ryzen 7", nbCores=8, memory=1024.0),
         ]
         for execution in executions:
             self.execution_manager.addProcessExecution(execution)
@@ -146,12 +174,15 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertEqual(len(all_executions), 2)
         self.assertEqual(all_executions[0].hash, "hash1")
         self.assertEqual(all_executions[0].nbCores, 2)
+        self.assertEqual(all_executions[0].memory, 512.0)
         self.assertEqual(all_executions[1].hash, "hash2")
         self.assertEqual(all_executions[1].nbCores, 8)
+        self.assertEqual(all_executions[1].memory, 1024.0)
 
     def test_removeProcessExecutionByHash(self):
         execution_entry = ProcessExecutionEntry(
-            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45, cpu="Intel Core i7", nbCores=2
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1,
+            hash="hash1", time=123.45, cpu="Intel Core i7", nbCores=2, memory=2048.0
         )
         self.execution_manager.addProcessExecution(execution_entry)
 
@@ -171,9 +202,12 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         # Mock the extract_trace_data function
         mock_data = pd.DataFrame(
             [
-                {"name": "sub:a (1)", "hash": "hash1", "realtime": pd.Timedelta("123.45s"), "process": "main:a", "cpu_model": "Intel Core i5", "cpus": 2},
-                {"name": "sub:a (2)", "hash": "hash2", "realtime": pd.Timedelta("456.78s"), "process": "main:a", "cpu_model": "AMD Ryzen 7", "cpus": 8},
-                {"name": "proc", "hash": "hash3", "realtime": pd.Timedelta("987.65s"), "process": "proc", "cpu_model": "Intel Core i9", "cpus": 16},
+                {"name": "sub:a (1)", "hash": "hash1", "realtime": pd.Timedelta("123.45s"), "process": "main:a",
+                 "cpu_model": "Intel Core i5", "cpus": 2, "memory": 512.0},
+                {"name": "sub:a (2)", "hash": "hash2", "realtime": pd.Timedelta("456.78s"), "process": "main:a",
+                 "cpu_model": "AMD Ryzen 7", "cpus": 8, "memory": 1024.0},
+                {"name": "proc", "hash": "hash3", "realtime": pd.Timedelta("987.65s"), "process": "proc",
+                 "cpu_model": "Intel Core i9", "cpus": 16, "memory": None},
             ]
         )
         mock_extract_trace_data.return_value = mock_data
@@ -192,29 +226,39 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertEqual(all_executions[0].hash, "hash1")
         self.assertEqual(all_executions[0].nbCores, 2)
         self.assertEqual(all_executions[0].cpu, "Intel Core i5")
+        self.assertEqual(all_executions[0].memory, 512.0)
+
         self.assertEqual(all_executions[1].hash, "hash2")
         self.assertEqual(all_executions[1].cpu, "AMD Ryzen 7")
         self.assertEqual(all_executions[1].nbCores, 8)
+        self.assertEqual(all_executions[1].memory, 1024.0)
+
         self.assertEqual(all_executions[2].hash, "hash3")
         self.assertEqual(all_executions[2].cpu, "Intel Core i9")
         self.assertEqual(all_executions[2].nbCores, 16)
+        self.assertIsNone(all_executions[2].memory)
 
     def test_getExecutionTimesForProcessAndTraces(self):
         # Add process executions to the database
         execution_entry_1 = ProcessExecutionEntry(
-            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1, hash="hash1", time=123.45, cpu="Intel Core i7", nbCores=4
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1,
+            hash="hash1", time=123.45, cpu="Intel Core i7", nbCores=4, memory=768.0
         )
         execution_entry_2 = ProcessExecutionEntry(
-            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2, hash="hash2", time=456.78, cpu="AMD Ryzen 7", nbCores=8
+            eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=2,
+            hash="hash2", time=456.78, cpu="AMD Ryzen 7", nbCores=8, memory=1536.0
         )
         self.execution_manager.addProcessExecution(execution_entry_1)
         self.execution_manager.addProcessExecution(execution_entry_2)
 
         # Retrieve execution times for the process and trace
-        execution_times = self.execution_manager.getExecutionTimesForProcessAndTraces("resolved_process", [self.trace_entry.name], is_resolved_name=True)
+        execution_times = self.execution_manager.getExecutionTimesForProcessAndTraces(
+            "resolved_process", [self.trace_entry.name], is_resolved_name=True)
         self.assertEqual(len(execution_times), 2)
         self.assertEqual(execution_times.iloc[0]["execution_time"], 123.45)
+        self.assertEqual(execution_times.iloc[0]["memory"], 768.0)
         self.assertEqual(execution_times.iloc[1]["execution_time"], 456.78)
+        self.assertEqual(execution_times.iloc[1]["memory"], 1536.0)
 
         # Test with a non-existent process
         execution_times_empty = self.execution_manager.getExecutionTimesForProcessAndTraces("non_existent_process", [self.trace_entry.name])

@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS ProcessExecutions (
 	time Real NOT NULL, -- Execution time in milliseconds
 	cpu TEXT NOT NULL,
 	nbCores INTEGER NOT NULL,
+	memory Real, -- Set to NULL in case a user "per-core" requirement was used, thus bypassing nextflow management.
 	
 	UNIQUE (tId, rId, instance, hash)
 );
