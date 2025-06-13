@@ -4,7 +4,7 @@ import pandas as pd
 import datetime
 
 from nf_trace_db_manager import NextflowTraceDBManager
-from nf_trace_db_analyzer import analyze_process_execution_correlation, anova_on_process_execution_times, build_execution_predictors, extract_execution_time_linear_reg, get_execution_times_distribution_charasteristics
+from nf_trace_db_analyzer import build_execution_metric_predictors
 
 
 def generate_nextflow_config_from_trace(trace_df, output_config_file):
@@ -93,7 +93,7 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
     max_nb_retries = 3
 
     # Build execution predictors
-    stats_based_config, model_based_config = build_execution_predictors(db_manager)
+    stats_based_config, model_based_config = build_execution_metric_predictors(db_manager, metric="time")
 
     # Step 3: Generate the Nextflow configuration file
     with open(output_config_file, 'w') as file:
@@ -159,7 +159,7 @@ def generate_markdown_summary(db_manager, output_markdown_file):
     :return: None. Writes the summary to the specified markdown file.
     """
     # Build execution predictors
-    stats_based_config, model_based_config = build_execution_predictors(db_manager)
+    stats_based_config, model_based_config = build_execution_metric_predictors(db_manager, metric="time")
 
     # Prepare the markdown content
     markdown_lines = [

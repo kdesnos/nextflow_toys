@@ -238,7 +238,7 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertEqual(all_executions[2].nbCores, 16)
         self.assertIsNone(all_executions[2].memory)
 
-    def test_getExecutionTimesForProcessAndTraces(self):
+    def test_getExecutionMetricsForProcessAndTraces(self):
         # Add process executions to the database
         execution_entry_1 = ProcessExecutionEntry(
             eId=0, tId=self.trace_entry.tId, rId=self.resolved_entry.rId, instance=1,
@@ -252,7 +252,7 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.execution_manager.addProcessExecution(execution_entry_2)
 
         # Retrieve execution times for the process and trace
-        execution_times = self.execution_manager.getExecutionTimesForProcessAndTraces(
+        execution_times = self.execution_manager.getExecutionMetricsForProcessAndTraces(
             "resolved_process", [self.trace_entry.name], is_resolved_name=True)
         self.assertEqual(len(execution_times), 2)
         self.assertEqual(execution_times.iloc[0]["execution_time"], 123.45)
@@ -261,7 +261,7 @@ class TestProcessExecutionTableManager(unittest.TestCase):
         self.assertEqual(execution_times.iloc[1]["memory"], 1536.0)
 
         # Test with a non-existent process
-        execution_times_empty = self.execution_manager.getExecutionTimesForProcessAndTraces("non_existent_process", [self.trace_entry.name])
+        execution_times_empty = self.execution_manager.getExecutionMetricsForProcessAndTraces("non_existent_process", [self.trace_entry.name])
         self.assertTrue(execution_times_empty.empty)
 
 

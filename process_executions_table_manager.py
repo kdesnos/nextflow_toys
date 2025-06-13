@@ -161,7 +161,7 @@ class ProcessExecutionTableManager:
         # Check if any rows were affected
         return cursor.rowcount > 0
 
-    def getExecutionTimesForProcessAndTraces(self, process_name, trace_names=None, is_resolved_name=False):
+    def getExecutionMetricsForProcessAndTraces(self, process_name, trace_names=None, is_resolved_name=False):
         """
         Get execution times for a specific process and trace(s).
 
@@ -250,7 +250,6 @@ class ProcessExecutionTableManager:
             process_to_cpu_mapping[core_id].append(actor_name)
 
         return process_to_cpu_mapping
-
 
 class ProcessExecutionEntry:
     def __init__(self, eId, tId, rId, instance, hash, time, cpu, nbCores, memory):

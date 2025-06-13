@@ -934,13 +934,14 @@ class PreesmExporter:
         self.db_manager.connect()
 
         param_values = extract_from_nf_log.extractPipelineParameters(log_report_path)
-        stats_df, regression_df = nf_trace_db_analyzer.build_execution_predictors(self.db_manager)
+        stats_df, regression_df = nf_trace_db_analyzer.build_execution_metric_predictors(self.db_manager, metric="time")
 
-        predictions = nf_trace_db_analyzer.predict_time_from_param_values(
+        predictions = nf_trace_db_analyzer.predict_metric_from_param_values(
             self.db_manager,
             stats_based_config=stats_df,
             model_based_config=regression_df,
-            pipeline_params_df=param_values)
+            pipeline_params_df=param_values,
+            metric="time")
 
         self.export_dataflow_files()
         nb_cores_printed = self.export_archi_to_files(nb_cores)

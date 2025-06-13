@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from extract_from_nf_log import contains_execution_complete_message, extract_task_info_from_lines, extract_trace_file_path_from_lines, extractPipelineParameters, extractProcessInputs
 from extract_from_trace import extract_trace_data_from_lines
-from nf_trace_db_analyzer import build_execution_predictors
+from nf_trace_db_analyzer import build_execution_metric_predictors
 from nf_trace_db_manager import NextflowTraceDBManager
 from extract_trace_from_html import extract_trace_data
 
@@ -41,7 +41,7 @@ class NextflowTraceDBCompanion(FileSystemEventHandler):
 
         # Build the model used to predict execution time
         print("Building execution time prediction model from DB...")
-        self.stats_based_config, self.model_based_config = build_execution_predictors(self.db_manager)
+        self.stats_based_config, self.model_based_config = build_execution_metric_predictors(self.db_manager, metric="time")
 
         # Use a dictionary to store model entries for each process
         self.process_model_map = {}

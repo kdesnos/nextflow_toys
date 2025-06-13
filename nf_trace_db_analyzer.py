@@ -1,47 +1,115 @@
 import pandas as pd
-from nf_trace_db_manager import NextflowTraceDBManager
-from scipy.stats import pearsonr
+import numpy as np
+from scipy.stats import pearsonr, f_oneway
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
-from scipy.stats import f_oneway
-from sklearn.linear_model import Lasso, LinearRegression
-from sklearn.metrics import mean_squared_error
-import numpy as np
 import warnings
 from statsmodels.tools.sm_exceptions import IterationLimitWarning, ConvergenceWarning
 
+from nf_trace_db_manager import NextflowTraceDBManager
 
-def analyze_process_execution_time_consistency(
+
+def get_metric_default_threshold(metric):
+    """Returns default threshold values for different metrics"""
+    if metric == "time":
+        return 15000  # 15 seconds in ms
+    elif metric == "memory":
+        return 100 * 1024 * 1024  # 100 MB in bytes
+    else:
+        raise ValueError(f"Unknown metric: {metric}")
+
+
+def get_metric_tolerance(metric):
+    """Returns default tolerance values for different metrics"""
+    if metric == "time":
+        return 0.1  # 10% variation
+    elif metric == "memory":
+        return 0.2  # 20% variation for memory
+    else:
+        raise ValueError(f"Unknown metric: {metric}")
+
+
+def format_metric_value(value, metric):
+    """Format metric value to human-readable format
+
+    :param value: The metric value to format.
+    :param metric: The type of metric ("time" or "memory").
+    :return: A string with the formatted metric value, or None if the input value is NaN.
+    :raises ValueError: If the metric is unknown.
+    """
+    if pd.isna(value):
+        return None
+
+    if metric == "time":
+        # Convert milliseconds to readable format (HH:MM:SS)
+        seconds = value / 1000
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    elif metric == "memory":
+        # Convert bytes to appropriate unit
+        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        size = float(value)
+        unit_index = 0
+
+        while size >= 1024.0 and unit_index < len(units) - 1:
+            size /= 1024.0
+            unit_index += 1
+
+        return f"{size:.2f} {units[unit_index]}"
+
+    else:
+        raise ValueError(f"Unknown metric: {metric}")
+
+
+def analyze_process_execution_metric_consistency(
     db_manager,
-    tolerance=0.1,
-    std_dev_threshold=15000,
+    metric="time",
+    tolerance=None,
+    threshold=None,
     process_names=None,
     resolved_process_names=None,
     trace_names=None,
     group_by_resolved_name=False,
     group_by_trace_name=False,
-    quantile=0.80  # Default quantile value
+    quantile=0.80
 ):
     """
-    Analyze the consistency of execution times for processes in the Processes table, ignoring outliers.
+    Analyze the consistency of execution metrics for processes in the Processes table, ignoring outliers.
 
     :param db_manager: An instance of NextflowTraceDBManager.
-    :param tolerance: The relative tolerance (default: 0.1, i.e., 10%) for the coefficient of variation.
-    :param std_dev_threshold: The absolute threshold for the standard deviation (default: 15000 milliseconds or 15 seconds).
-    :param process_names: Optional list of process names to filter the results. If None, all processes are included.
-    :param resolved_process_names: Optional list of resolved process names to filter the results. If None, all resolved processes are included.
-    :param trace_names: Optional list of trace names to filter the results. If None, all traces are included.
+    :param metric: The metric to analyze ("time" or "memory").
+    :param tolerance: The relative tolerance for the coefficient of variation. If None, uses metric default.
+    :param threshold: The absolute threshold for the standard deviation. If None, uses metric default.
+    :param process_names: Optional list of process names to filter the results.
+    :param resolved_process_names: Optional list of resolved process names to filter the results.
+    :param trace_names: Optional list of trace names to filter the results.
     :param group_by_resolved_name: If True, include resolved process names in the grouping.
     :param group_by_trace_name: If True, include trace names in the grouping.
-    :param quantile: The quantile range for outlier removal (default: 0.80, meaning 0.1 and 0.9 are used for IQR).
+    :param quantile: The quantile range for outlier removal (e.g., 0.80 for 10th to 90th percentile).
     :return: A Pandas DataFrame with grouped results, computed statistics, and constancy criteria.
+    :raises ValueError: If the metric is not "time" or "memory".
     """
-    # SQL query to retrieve execution times and grouping columns
+    # Validation for metric parameter
+    if metric not in ["time", "memory"]:
+        raise ValueError("Metric must be either 'time' or 'memory'")
+
+    # Use default values if not specified
+    if tolerance is None:
+        tolerance = get_metric_tolerance(metric)
+    if threshold is None:
+        threshold = get_metric_default_threshold(metric)
+
+    # SQL query to retrieve execution metrics and grouping columns
     query = f"""
         SELECT t.name AS trace_name,
             p.name AS process_name,
             rpn.name AS resolved_name,
-            pe.time,
+            pe.{metric},
             pe.cpu
         FROM Processes p
         LEFT JOIN (
@@ -79,11 +147,10 @@ def analyze_process_execution_time_consistency(
     results = cursor.fetchall()
 
     # Create a Pandas DataFrame from the query results
-    column_names = ["trace_name", "process_name", "resolved_name", "time", "cpu"]
+    column_names = ["trace_name", "process_name", "resolved_name", metric, "cpu"]
     df = pd.DataFrame(results, columns=column_names)
 
     # Remove outliers using the IQR method for each group
-    # with the quantile range determined by the `quantile` parameter
     def remove_outliers(group):
         if (quantile == 1.00):
             # Skip outlier removal if quantile is 1.00
@@ -108,24 +175,28 @@ def analyze_process_execution_time_consistency(
         group_cols.append("process_name")  # Default to grouping by process_name if resolved_name is not activated
     group_cols.append("cpu")  # Always group by cpu
 
-    # Apply outlier removal to the 'time' column only, then merge back with group columns
-    df["time"] = df.groupby(group_cols)["time"].transform(remove_outliers)
+    # Apply outlier removal to the metric column only, then merge back with group columns
+    df[metric] = df.groupby(group_cols)[metric].transform(remove_outliers)
 
     # Group by the selected columns and compute statistics
-    # Use dropna=False to keep Process (or ResolvedProcess) names with NaN execution times
-    grouped = df.groupby(group_cols, dropna=False)["time"]
-    stats = grouped.agg(
-        mean_time="mean",
-        std_dev_time="std",
-        execution_count="count"
-    ).reset_index()
+    # Use dropna=False to keep Process (or ResolvedProcess) names with NaN metrics
+    grouped = df.groupby(group_cols, dropna=False)[metric]
+
+    mean_col = f"mean_{metric}"
+    std_dev_col = f"std_dev_{metric}"
+
+    stats = grouped.agg(**{
+        mean_col: "mean",
+        std_dev_col: "std",
+        "execution_count": "count"
+    }).reset_index()
 
     # Calculate the coefficient of variation
-    stats["coefficient_of_variation"] = stats["std_dev_time"] / stats["mean_time"]
+    stats["coefficient_of_variation"] = stats[std_dev_col] / stats[mean_col]
 
     # Add a column for the constancy criteria
     stats["is_constant"] = (
-        (stats["coefficient_of_variation"] <= tolerance) | (stats["std_dev_time"] <= std_dev_threshold)
+        (stats["coefficient_of_variation"] <= tolerance) | (stats[std_dev_col] <= threshold)
     )
 
     # Ensure all required columns are present in the DataFrame
@@ -134,45 +205,60 @@ def analyze_process_execution_time_consistency(
     if "resolved_name" not in stats:
         stats["resolved_name"] = "*"
 
-    # Reorder the columns to match the specified order
+    # Reorder the columns for consistent output
     stats = stats[
         ["trace_name", "process_name", "resolved_name", "is_constant", "execution_count",
-         "mean_time", "std_dev_time", "coefficient_of_variation", "cpu"]
+         mean_col, std_dev_col, "coefficient_of_variation", "cpu"]
     ]
 
     return stats
 
 
-def identify_process_execution_time_consistency(
+def identify_process_execution_metric_consistency(
     db_manager,
-    tolerance=0.1,
-    std_dev_threshold=15000,
+    metric="time",
+    tolerance=None,
+    threshold=None,
     quantile=0.80
 ):
     """
-    Identify processes with consistent execution times based on the specified criteria.
+    Identify processes with consistent execution metrics based on the specified criteria.
     This function does not print anything and returns the analysis tables.
 
     :param db_manager: An instance of NextflowTraceDBManager.
-    :param tolerance: The relative tolerance for the coefficient of variation.
-    :param std_dev_threshold: The absolute threshold for the standard deviation.
-    :param quantile: The quantile range for outlier removal (default: 0.80, meaning 0.1 and 0.9 are used for IQR).
-    :return: A tuple of DataFrames: process_consistency_analysis, per_trace_analysis, per_resolved_analysis, per_resolved_per_trace_analysis.
+    :param metric: The metric to analyze ("time" or "memory").
+    :param tolerance: The relative tolerance for the coefficient of variation. If None, uses metric default.
+    :param threshold: The absolute threshold for the standard deviation. If None, uses metric default.
+    :param quantile: The quantile range for outlier removal.
+    :return: A tuple of DataFrames:
+             (process_consistency_analysis, per_trace_analysis,
+              per_resolved_analysis, per_resolved_per_trace_analysis).
     """
-    # Identify processes with consistent execution times
-    process_consistency_analysis = analyze_process_execution_time_consistency(
-        db_manager, tolerance, std_dev_threshold, quantile=quantile
-    )
-    executed_process_analysis = process_consistency_analysis[~process_consistency_analysis["mean_time"].isna()]
+    # Use default values if not specified
+    if tolerance is None:
+        tolerance = get_metric_tolerance(metric)
+    if threshold is None:
+        threshold = get_metric_default_threshold(metric)
 
-    # For processes with inconsistent execution times, check consistency per trace
+    # Identify processes with consistent execution metrics
+    process_consistency_analysis = analyze_process_execution_metric_consistency(
+        db_manager, metric, tolerance, threshold, quantile=quantile
+    )
+
+    mean_col = f"mean_{metric}"
+    executed_process_analysis = process_consistency_analysis[~process_consistency_analysis[mean_col].isna()]
+
+    # For processes with inconsistent execution metrics, check consistency per trace
     inconsistent_processes = executed_process_analysis[executed_process_analysis["is_constant"] == False][
         "process_name"
     ].unique()
 
     # Perform per-trace analysis only for inconsistent processes
-    per_trace_analysis = analyze_process_execution_time_consistency(
-        db_manager, tolerance, std_dev_threshold, process_names=inconsistent_processes, group_by_trace_name=True, quantile=quantile
+    per_trace_analysis = analyze_process_execution_metric_consistency(
+        db_manager, metric, tolerance, threshold,
+        process_names=inconsistent_processes,
+        group_by_trace_name=True,
+        quantile=quantile
     )
 
     # Identify processes that are consistent across all traces
@@ -195,8 +281,11 @@ def identify_process_execution_time_consistency(
     inconsistent_processes = [process for process in inconsistent_processes if process not in consistent_processes_per_trace["process_name"].values]
 
     # Identify resolved processes that are consistent across all traces
-    per_resolved_analysis = analyze_process_execution_time_consistency(
-        db_manager, tolerance, std_dev_threshold, process_names=inconsistent_processes, group_by_resolved_name=True, quantile=quantile
+    per_resolved_analysis = analyze_process_execution_metric_consistency(
+        db_manager, metric, tolerance, threshold,
+        process_names=inconsistent_processes,
+        group_by_resolved_name=True,
+        quantile=quantile
     )
 
     consistent_per_resolved_analysis = per_resolved_analysis[per_resolved_analysis["is_constant"] == True]
@@ -205,64 +294,73 @@ def identify_process_execution_time_consistency(
     inconsistent_resolved_processes = [resolved_process for resolved_process in per_resolved_analysis["resolved_name"]
                                        if resolved_process not in consistent_per_resolved_analysis["resolved_name"].values]
 
-    per_resolved_per_trace_analysis = analyze_process_execution_time_consistency(
-        db_manager, tolerance, std_dev_threshold, resolved_process_names=inconsistent_resolved_processes, group_by_resolved_name=True, group_by_trace_name=True, quantile=quantile
+    per_resolved_per_trace_analysis = analyze_process_execution_metric_consistency(
+        db_manager, metric, tolerance, threshold,
+        resolved_process_names=inconsistent_resolved_processes,
+        group_by_resolved_name=True,
+        group_by_trace_name=True,
+        quantile=quantile
     )
 
     return process_consistency_analysis, per_trace_analysis, per_resolved_analysis, per_resolved_per_trace_analysis
 
 
-def print_process_execution_time_consistency(
+def print_process_execution_metric_consistency(
     process_consistency_analysis,
     per_trace_analysis,
     per_resolved_analysis,
-    per_resolved_per_trace_analysis
+    per_resolved_per_trace_analysis,
+    metric="time"
 ):
     """
-    Reproduce the same prints as the original identify_process_execution_time_consistency function.
+    Print a summary of the process execution metric consistency analysis.
 
     :param process_consistency_analysis: DataFrame with process-level consistency analysis.
     :param per_trace_analysis: DataFrame with per-trace consistency analysis.
     :param per_resolved_analysis: DataFrame with resolved process-level consistency analysis.
     :param per_resolved_per_trace_analysis: DataFrame with resolved process per-trace consistency analysis.
+    :param metric: The metric that was analyzed ("time" or "memory").
     """
+    mean_col = f"mean_{metric}"
+
     # Process-level consistency analysis
-    executed_process_analysis = process_consistency_analysis[~process_consistency_analysis["mean_time"].isna()]
+    executed_process_analysis = process_consistency_analysis[~process_consistency_analysis[mean_col].isna()]
     consistent_processes = executed_process_analysis[executed_process_analysis["is_constant"] == True]
-    print(f"\n## Consistent processes: {len(consistent_processes)}")
+    print(f"\n## Consistent processes for {metric}: {len(consistent_processes)}")
     print(executed_process_analysis.sort_values(by=["is_constant", "process_name"], ascending=[False, True]))
 
     # Per-trace consistency analysis
     consistent_per_trace = per_trace_analysis[per_trace_analysis["is_constant_per_trace"] == True]
-    consistent_processes_count = consistent_per_trace.groupby("process_name").ngroups  # Group by process_name to avoid double-counting
-    print(f"\n## Processes consistent within each individual traces: {consistent_processes_count}")
+    consistent_processes_count = consistent_per_trace.groupby("process_name").ngroups
+    print(f"\n## Processes with consistent {metric} within each individual trace: {consistent_processes_count}")
     print(per_trace_analysis.sort_values(by=["is_constant_per_trace", "process_name"], ascending=[False, True]))
 
     # Resolved process-level consistency analysis
     consistent_per_resolved_analysis = per_resolved_analysis[per_resolved_analysis["is_constant"] == True]
-    print(f"\n## Resolved processes consistent across all traces: {len(consistent_per_resolved_analysis)}")
+    print(f"\n## Resolved processes with consistent {metric} across all traces: {len(consistent_per_resolved_analysis)}")
     print(per_resolved_analysis.sort_values(by=["is_constant", "process_name", "resolved_name"], ascending=[False, True, True]))
 
     # Resolved process per-trace consistency analysis
     consistent_per_resolved_per_trace = per_resolved_per_trace_analysis[per_resolved_per_trace_analysis["is_constant"] == True]
-    print(f"\n## Resolved processes consistent within each individual traces: {len(consistent_per_resolved_per_trace)}")
+    print(f"\n## Resolved processes with consistent {metric} within each individual trace: {len(consistent_per_resolved_per_trace)}")
     print(consistent_per_resolved_per_trace.sort_values(by=["is_constant", "process_name", "resolved_name"], ascending=[False, True, True]))
 
     inconsistent_per_resolved_per_trace = per_resolved_per_trace_analysis[per_resolved_per_trace_analysis["is_constant"] == False]
-    print(f"\n## Inconsistent processes: {len(inconsistent_per_resolved_per_trace)}")
+    print(f"\n## Processes with inconsistent {metric}: {len(inconsistent_per_resolved_per_trace)}")
     print(inconsistent_per_resolved_per_trace.sort_values(by=["is_constant", "process_name", "resolved_name"], ascending=[False, True, True]))
 
     # Unexecuted processes
-    unexecuted_processes = process_consistency_analysis[process_consistency_analysis["mean_time"].isna()]
+    unexecuted_processes = process_consistency_analysis[process_consistency_analysis[mean_col].isna()]
     print(f"\n## Processes that are never executed: {len(unexecuted_processes)}")
     print(unexecuted_processes.sort_values(by=["process_name"], ascending=[True]))
 
 
-def summarize_consistency_analysis(
+def summarize_metric_consistency_analysis(
     process_consistency_analysis,
     per_trace_analysis,
     per_resolved_analysis,
-    per_resolved_per_trace_analysis
+    per_resolved_per_trace_analysis,
+    metric="time"
 ):
     """
     Summarize the consistency analysis into a single DataFrame.
@@ -271,10 +369,14 @@ def summarize_consistency_analysis(
     :param per_trace_analysis: DataFrame with per-trace consistency analysis.
     :param per_resolved_analysis: DataFrame with resolved process-level consistency analysis.
     :param per_resolved_per_trace_analysis: DataFrame with resolved process per-trace consistency analysis.
-    :return: A single DataFrame summarizing the consistency analysis.
+    :param metric: The metric that was analyzed ("time" or "memory").
+    :return: A single Pandas DataFrame summarizing the consistency analysis.
     """
+    mean_col = f"mean_{metric}"
+    std_dev_col = f"std_dev_{metric}"
+
     # Keep only non-executed processes
-    not_executed = process_consistency_analysis[process_consistency_analysis["mean_time"].isna()].copy()
+    not_executed = process_consistency_analysis[process_consistency_analysis[mean_col].isna()].copy()
     not_executed["consistency_level"] = "Not Executed"
 
     # Keep only processes that are constant
@@ -304,7 +406,7 @@ def summarize_consistency_analysis(
     # Drop unnecessary columns to avoid duplication
     summary = summary[[
         "trace_name", "process_name", "resolved_name", "consistency_level",
-        "execution_count", "mean_time", "std_dev_time", "coefficient_of_variation", "cpu"
+        "execution_count", mean_col, std_dev_col, "coefficient_of_variation", "cpu"
     ]]
 
     # Fill missing values for columns that may not exist in all tables
@@ -314,79 +416,25 @@ def summarize_consistency_analysis(
     return summary
 
 
-def identify_variable_pipeline_numerical_parameters(db_manager, trace_names=None):
+def get_metric_distribution_characteristics(db_manager, process_name, metric="time", is_resolved_name=False, trace_names=None):
     """
-    Finds the parameters in the PipelineParams table that are numerical and have
-    different values across all traces. Converts parameter values to their appropriate
-    numerical types based on their type.
-
-    :param db_manager: An instance of NextflowTraceDBManager.
-    :param trace_names: Optional list of trace names to filter the results. If None, all traces are included.
-    :return: A DataFrame with the parameters that are variable across the specified traces,
-             with values converted to their appropriate numerical types.
-    """
-    # SQL query to get the list of pipeline parameters used for the specified traces
-    query = """
-        SELECT pp.name AS param_name, t.name AS trace_name, ppv.value, pp.type
-        FROM PipelineParams pp
-        JOIN (
-            SELECT ppv.paramId FROM PipelineParamValues ppv
-            JOIN Traces t ON ppv.tId = t.tId
-            JOIN PipelineParams pp ON pp.paramId = ppv.paramId
-            WHERE pp.type IN ('Integer', 'Real', 'Boolean') -- For now, ignore 'List[Real]', 'List[Integer]', 'List[Boolean]'
-            GROUP BY ppv.paramId
-            HAVING COUNT(DISTINCT ppv.value) > 1
-        ) AS J ON pp.paramId = J.paramId
-        JOIN PipelineParamValues ppv ON J.paramId = ppv.paramId
-        JOIN Traces t ON t.tId = ppv.tId
-    """
-
-    # Add filtering for trace names if provided
-    params = []
-    if trace_names:
-        placeholders = ",".join("?" for _ in trace_names)
-        query += f" WHERE t.name IN ({placeholders})"
-        params.extend(trace_names)
-
-    # Execute the query and fetch the results
-    cursor = db_manager.connection.cursor()
-    cursor.execute(query, params)
-    results = cursor.fetchall()
-
-    # Create a DataFrame from the query results
-    column_names = ["param_name", "trace_name", "value", "type"]
-    df = pd.DataFrame(results, columns=column_names)
-
-    # Convert parameter values to their appropriate numerical types
-    def convert_value(row):
-        if row["type"] == "Boolean":
-            return 1 if row["value"] == "True" else 0
-        elif row["type"] == "Integer":
-            return int(row["value"])
-        elif row["type"] == "Real":
-            return float(row["value"])
-        else:
-            raise Exception(f"Unsupported parameter type '{row['type']}' for parameter '{row['param_name']}'.")
-
-    df["value"] = df.apply(convert_value, axis=1)
-
-    # Return the DataFrame with variable parameters and converted values
-    return df
-
-
-def get_execution_times_distribution_charasteristics(db_manager, process_name, is_resolved_name=False, trace_names=None):
-    """
-    Get the distribution characteristics of execution times for a given process.
+    Get the distribution characteristics of execution metrics for a given process.
 
     :param db_manager: An instance of NextflowTraceDBManager.
     :param process_name: The name of the process or resolved process to analyze.
+    :param metric: The metric to analyze ("time" or "memory").
     :param is_resolved_name: If True, treat process_name as a resolved process name.
     :param trace_names: A list of trace names to filter the analysis. If None, all traces are included.
-    :return: A Pandas DataFrame with distribution characteristics.
+    :return: A Pandas DataFrame with distribution characteristics (mean, std_dev, min, max).
+    :raises ValueError: If the metric is not "time" or "memory".
     """
-    # SQL query to get the execution times for the specified process
+    # Validate metric parameter
+    if metric not in ["time", "memory"]:
+        raise ValueError("Metric must be either 'time' or 'memory'")
+
+    # SQL query to get the execution metrics for the specified process
     query = f"""
-        SELECT pe.time, t.name AS trace_name
+        SELECT pe.{metric}, t.name AS trace_name
         FROM ProcessExecutions pe
         JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
         JOIN Processes p ON rpn.pId = p.pId
@@ -406,43 +454,57 @@ def get_execution_times_distribution_charasteristics(db_manager, process_name, i
     execution_data = cursor.fetchall()
 
     # Convert execution data to a DataFrame
-    execution_df = pd.DataFrame(execution_data, columns=["execution_time", "trace_name"])
+    execution_col = f"execution_{metric}"
+    execution_df = pd.DataFrame(execution_data, columns=[execution_col, "trace_name"])
 
     # Calculate distribution characteristics
-    mean_time = execution_df["execution_time"].mean()
-    std_dev_time = execution_df["execution_time"].std(ddof=0)
-    min_time = execution_df["execution_time"].min()
-    max_time = execution_df["execution_time"].max()
+    mean_val = execution_df[execution_col].mean()
+    std_dev_val = execution_df[execution_col].std(ddof=0)
+    min_val = execution_df[execution_col].min()
+    max_val = execution_df[execution_col].max()
+
+    # Create column names based on metric
+    mean_col = f"mean_{metric}"
+    std_dev_col = f"std_dev_{metric}"
+    min_col = f"min_{metric}"
+    max_col = f"max_{metric}"
 
     # Create a summary DataFrame
     summary_df = pd.DataFrame({
         "process_name": [process_name],
-        "mean_time": [mean_time],
-        "std_dev_time": [std_dev_time],
-        "min_time": [min_time],
-        "max_time": [max_time]
+        mean_col: [mean_val],
+        std_dev_col: [std_dev_val],
+        min_col: [min_val],
+        max_col: [max_val]
     })
 
     return summary_df
 
 
-def analyze_process_execution_correlation(db_manager, process_name, skip_warnings=False):
+def analyze_process_execution_metric_correlation(db_manager, process_name, metric="time", skip_warnings=False):
     """
-    Analyze the correlation between the execution times of a given process and varying pipeline parameters.
+    Analyze the correlation between the execution metrics of a given process and varying pipeline parameters.
 
     :param db_manager: An instance of NextflowTraceDBManager.
     :param process_name: The name of the process to analyze.
+    :param metric: The metric to analyze ("time" or "memory").
     :param skip_warnings: If True, suppress warnings about low data points or unique parameter values.
-    :return: A Pandas DataFrame with parameter names, correlation coefficients, p-values, and R² values, sorted by correlation.
+    :return: A Pandas DataFrame with parameter correlations, sorted by absolute correlation.
+    :raises ValueError: If the metric is not "time" or "memory".
+    :raises Exception: If no varying pipeline parameters or no metric data for the process is found.
     """
+    # Validate metric parameter
+    if metric not in ["time", "memory"]:
+        raise ValueError("Metric must be either 'time' or 'memory'")
+
     # Step 1: Retrieve varying pipeline parameters and their values across traces
     varying_params = identify_variable_pipeline_numerical_parameters(db_manager)
     if varying_params.empty:
         raise Exception("No varying pipeline parameters found.")
 
-    # Step 2: Retrieve all execution times for the given process
-    query = """
-        SELECT pe.time, t.name AS trace_name
+    # Step 2: Retrieve all execution metrics for the given process
+    query = f"""
+        SELECT pe.{metric}, t.name AS trace_name
         FROM ProcessExecutions pe
         JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
         JOIN Processes p ON rpn.pId = p.pId
@@ -454,15 +516,16 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
     execution_data = cursor.fetchall()
 
     if not execution_data:
-        raise Exception(f"No execution times found for process '{process_name}'.")
+        raise Exception(f"No {metric} data found for process '{process_name}'.")
 
     # Convert execution data to a DataFrame
-    execution_df = pd.DataFrame(execution_data, columns=["execution_time", "trace_name"])
+    execution_col = f"execution_{metric}"
+    execution_df = pd.DataFrame(execution_data, columns=[execution_col, "trace_name"])
 
     # Step 3: Pivot the varying_params DataFrame to have one row per trace and columns for each parameter
     param_df = varying_params.pivot(index="trace_name", columns="param_name", values="value").reset_index()
 
-    # Step 4: Merge execution times with varying parameter values
+    # Step 4: Merge execution metrics with varying parameter values
     merged_df = execution_df.merge(param_df, on="trace_name", how="inner")
 
     # Step 5: Convert parameter values to numerical types based on the "type" column
@@ -484,7 +547,7 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
         else:
             raise Exception(f"Unsupported parameter type '{param_type}' for parameter '{param}'.")
 
-    # Step 6: Analyze correlation between execution times and each parameter
+    # Step 6: Analyze correlation between execution metrics and each parameter
     correlations = []
     num_data_points = len(merged_df)
 
@@ -502,7 +565,7 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
             print(f"Warning: Parameter '{param}' has only {num_unique_values} unique values. Correlation may not be reliable.")
 
         # Calculate Pearson correlation coefficient and p-value
-        correlation, p_value = pearsonr(merged_df["execution_time"], merged_df[param])
+        correlation, p_value = pearsonr(merged_df[execution_col], merged_df[param])
         correlations.append({
             "process_name": process_name,
             "parameter": param,
@@ -522,40 +585,60 @@ def analyze_process_execution_correlation(db_manager, process_name, skip_warning
     return correlation_df
 
 
-def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_threshold=15000,
-                                      is_resolved_name=False, print_info=False, trace_names=None):
+def extract_metric_linear_reg(db_manager, process_name, metric="time", top_n=3, rmse_threshold=None,
+                              is_resolved_name=False, print_info=False, trace_names=None):
     """
-    Extract an expression for predicting execution time as a function of the best parameters.
+    Extract a regression model for predicting execution metrics as a function of the best parameters.
 
     :param db_manager: An instance of NextflowTraceDBManager.
     :param process_name: The name of the process to analyze.
+    :param metric: The metric to analyze ("time" or "memory").
     :param top_n: Maximum number of top parameters to use for the regression model.
-    :param rmse_threshold: RMSE threshold for stopping the iterative parameter addition.
+    :param rmse_threshold: RMSE threshold for stopping parameter addition. If None, uses metric default.
     :param is_resolved_name: If True, treat process_name as a resolved process name.
     :param print_info: If True, print the current expression and RMSE during the process.
-    :param trace_names: Optional list of trace names to filter the data. If None, all traces are included.
-    :return: A dictionary containing the regression model, the expression, and evaluation metrics.
+    :param trace_names: Optional list of trace names to filter the data.
+    :return: A dictionary containing the regression model, expression, RMSE, selected parameters, and metric.
+             Example: {'model': LinearRegression_object, 'expression': 'str_formula', 'rmse': float_value,
+                       'selected_parameters': {'param_name': {'type': 'param_type'}}, 'metric': 'metric_name'}
+    :raises ValueError: If the metric is not "time" or "memory".
+    :raises Exception: If no varying pipeline parameters or no metric data for the process is found.
     """
+    # Validate metric parameter
+    if metric not in ["time", "memory"]:
+        raise ValueError("Metric must be either 'time' or 'memory'")
+
+    # Use default threshold if not specified
+    if rmse_threshold is None:
+        rmse_threshold = get_metric_default_threshold(metric)
+
     # Step 1: Retrieve varying pipeline parameters
     varying_params = identify_variable_pipeline_numerical_parameters(db_manager, trace_names=trace_names)
     if varying_params.empty:
         raise Exception("No varying pipeline parameters found.")
 
-    # Step 2: Retrieve execution times for the given process
-    execution_times = db_manager.process_executions_manager.getExecutionTimesForProcessAndTraces(
+    # Step 2: Retrieve execution metrics for the given process
+    execution_metrics = db_manager.process_executions_manager.getExecutionMetricsForProcessAndTraces(
         process_name, trace_names=trace_names, is_resolved_name=is_resolved_name
     )
 
-    if execution_times.empty:
-        raise Exception(f"No execution times found for process '{process_name}'.")
+    if execution_metrics.empty:
+        raise Exception(f"No {metric} data found for process '{process_name}'.")
 
-    # Convert execution times to a DataFrame
-    execution_df = execution_times[["execution_time", "trace_name"]]
+    # Convert execution metrics to a DataFrame
+    execution_col = f"execution_{metric}"
+    # Filter the execution metrics to keep only the relevant columns
+    if metric == "memory":
+        execution_df = execution_metrics[["memory", "trace_name"]]
+        execution_df = execution_df.rename(columns={"memory": execution_col})
+    else:
+        execution_df = execution_metrics[["execution_time", "trace_name"]]
+        execution_df = execution_df.rename(columns={"execution_time": execution_col})
 
     # Step 3: Pivot the varying_params DataFrame to have one row per trace and columns for each parameter
     param_df = varying_params.pivot(index="trace_name", columns="param_name", values="value").reset_index()
 
-    # Step 4: Merge execution times with varying parameter values
+    # Step 4: Merge execution metrics with varying parameter values
     merged_df = execution_df.merge(param_df, on="trace_name", how="inner")
 
     # Step 5: Filter parameters based on hints from ProcessParamsHintsTableManager
@@ -569,7 +652,7 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
         available_params.remove("trace_name")
 
     # Step 6: Prepare data for regression
-    y = merged_df["execution_time"].values
+    y = merged_df[execution_col].values
     selected_params = []
     selected_params_info = {}  # Dictionary to store parameter info (name and type)
     rmse = float(2**31 - 1)  # Initialize with a large value
@@ -636,7 +719,7 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
         selected_params.append(best_param)
         # Store parameter info (name and type)
         selected_params_info[best_param] = {
-            "type": varying_params[varying_params["param_name"] == best_param]["type"].iloc[0]
+            "type": varying_params[varying_params["param_name"] == param]["type"].iloc[0]
         }
 
         available_params.remove(best_param)
@@ -648,6 +731,7 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
         if print_info:
             print(f"Current expression: {expression}")
             print(f"Current RMSE: {round(rmse):.0f}")
+            print(f"Metric units: {metric}")
 
         # Stop if RMSE is below the threshold
         if rmse <= rmse_threshold:
@@ -660,30 +744,43 @@ def extract_execution_time_linear_reg(db_manager, process_name, top_n=3, rmse_th
         "model": model,
         "expression": expression,
         "rmse": rmse,
-        "selected_parameters": selected_params_info
+        "selected_parameters": selected_params_info,
+        "metric": metric
     }
 
     return model_info
 
 
-def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tolerance=0.1, trace_names=None):
+def anova_on_process_execution_metrics(db_manager, metric="time", effect_threshold=None, tolerance=None, trace_names=None):
     """
-    For each process in the Processes table, performs a two-way ANOVA on execution times,
-    with factors: run (trace_name) and resolved process name (resolved_name).
-    Falls back to one-way ANOVA or standard deviation check if only one factor is possible.
-    Returns a DataFrame summarizing the results for each process.
+    For each process, performs ANOVA on execution metrics with factors: trace_name and resolved_name.
+
     :param db_manager: An instance of NextflowTraceDBManager.
-    :param effect_threshold_ms: The threshold in milliseconds for considering an effect significant.
-    :param tolerance: The threshold for coefficient of variation for the fallback test (default: 0.1).
-    :param trace_names: A list of trace names to filter the analysis. If None, all traces are included.
-    :return: A Pandas DataFrame with results for each process.
+    :param metric: The metric to analyze ("time" or "memory").
+    :param effect_threshold: The threshold for considering an effect significant. If None, uses metric default.
+    :param tolerance: The threshold for coefficient of variation. If None, uses metric default.
+    :param trace_names: A list of trace names to filter the analysis.
+    :return: A Pandas DataFrame with ANOVA results for each process.
+             Columns include: process_name, test (type of ANOVA), F-statistics, p-values or CV,
+             effect sizes, significance flags, and number of observations (n).
+    :raises ValueError: If the metric is not "time" or "memory".
     """
+    # Validate metric parameter
+    if metric not in ["time", "memory"]:
+        raise ValueError("Metric must be either 'time' or 'memory'")
+
+    # Use default values if not specified
+    if effect_threshold is None:
+        effect_threshold = get_metric_default_threshold(metric)
+    if tolerance is None:
+        tolerance = get_metric_tolerance(metric)
+
     processes = db_manager.process_manager.getAllProcesses()
     results = []
 
     for process in processes:
-        query = """
-            SELECT pe.time, t.name as trace_name, rpn.name as resolved_name
+        query = f"""
+            SELECT pe.{metric}, t.name as trace_name, rpn.name as resolved_name
             FROM ProcessExecutions pe
             JOIN ResolvedProcessNames rpn ON pe.rId = rpn.rId
             JOIN Traces t ON pe.tId = t.tId
@@ -703,43 +800,50 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
         if not rows:
             continue
 
-        df = pd.DataFrame(rows, columns=["time", "trace_name", "resolved_name"])
-        execs_per_trace = df.groupby("trace_name")["time"].count()
-        execs_per_resolved = df.groupby("resolved_name")["time"].count()
+        df = pd.DataFrame(rows, columns=[metric, "trace_name", "resolved_name"])
+        execs_per_trace = df.groupby("trace_name")[metric].count()
+        execs_per_resolved = df.groupby("resolved_name")[metric].count()
         enough_per_trace = (execs_per_trace > 1).any()
         enough_per_resolved = (execs_per_resolved > 1).any()
         n_traces = df["trace_name"].nunique()
         n_resolved = df["resolved_name"].nunique()
 
         # Compute effect sizes
-        trace_effect = df.groupby("trace_name")["time"].mean().max() - df.groupby("trace_name")["time"].mean().min() if n_traces > 1 else None
-        resolved_effect = df.groupby("resolved_name")["time"].mean().max(
-        ) - df.groupby("resolved_name")["time"].mean().min() if n_resolved > 1 else None
+        trace_effect = (df.groupby("trace_name")[metric].mean().max()
+                        - df.groupby("trace_name")[metric].mean().min()) if n_traces > 1 else None
+        resolved_effect = (df.groupby("resolved_name")[metric].mean().max()
+                           - df.groupby("resolved_name")[metric].mean().min()) if n_resolved > 1 else None
+
+        effect_col = f"{metric}_effect"
 
         if enough_per_trace and enough_per_resolved and n_traces > 1 and n_resolved > 1:
             # Two-way ANOVA
-            model = smf.ols('time ~ C(trace_name) + C(resolved_name)', data=df).fit()
+            model = smf.ols(f'{metric} ~ C(trace_name) + C(resolved_name)', data=df).fit()
             anova_table = sm.stats.anova_lm(model, typ=2)
             results.append({
                 "process_name": process.name,
                 "test": "anova2w",
                 "trace_F": anova_table.loc["C(trace_name)", "F"],
                 "trace_p_or_cv": anova_table.loc["C(trace_name)", "PR(>F)"],
-                "trace_effect_ms": trace_effect,
+                effect_col: trace_effect,
                 "trace_significant": (
-                    anova_table.loc["C(trace_name)", "PR(>F)"] < 0.05 and trace_effect is not None and trace_effect >= effect_threshold_ms
+                    anova_table.loc["C(trace_name)", "PR(>F)"] < 0.05
+                    and trace_effect is not None
+                    and trace_effect >= effect_threshold
                 ),
                 "resolved_F": anova_table.loc["C(resolved_name)", "F"],
                 "resolved_p": anova_table.loc["C(resolved_name)", "PR(>F)"],
-                "resolved_effect_ms": resolved_effect,
+                f"resolved_{effect_col}": resolved_effect,
                 "resolved_significant": (
-                    anova_table.loc["C(resolved_name)", "PR(>F)"] < 0.05 and resolved_effect is not None and resolved_effect >= effect_threshold_ms
+                    anova_table.loc["C(resolved_name)", "PR(>F)"] < 0.05
+                    and resolved_effect is not None
+                    and resolved_effect >= effect_threshold
                 ),
                 "n": len(df)
             })
         elif enough_per_trace and n_traces > 1:
             # One-way ANOVA on trace_name
-            groups = [g["time"].values for _, g in df.groupby("trace_name") if len(g) > 1]
+            groups = [g[metric].values for _, g in df.groupby("trace_name") if len(g) > 1]
             if len(groups) > 1:
                 F, p = f_oneway(*groups)
             else:
@@ -749,19 +853,21 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
                 "test": "anova1w",
                 "trace_F": F,
                 "trace_p_or_cv": p,
-                "trace_effect_ms": trace_effect,
+                effect_col: trace_effect,
                 "trace_significant": (
-                    p is not None and p < 0.05 and trace_effect is not None and trace_effect >= effect_threshold_ms
+                    p is not None and p < 0.05
+                    and trace_effect is not None
+                    and trace_effect >= effect_threshold
                 ),
                 "resolved_F": None,
                 "resolved_p": None,
-                "resolved_effect_ms": None,
+                f"resolved_{effect_col}": None,
                 "resolved_significant": None,
                 "n": len(df)
             })
         elif enough_per_resolved and n_resolved > 1:
             # One-way ANOVA on resolved_name
-            groups = [g["time"].values for _, g in df.groupby("resolved_name") if len(g) > 1]
+            groups = [g[metric].values for _, g in df.groupby("resolved_name") if len(g) > 1]
             if len(groups) > 1:
                 F, p = f_oneway(*groups)
             else:
@@ -771,30 +877,32 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
                 "test": "anova1w",
                 "trace_F": None,
                 "trace_p_or_cv": None,
-                "trace_effect_ms": None,
+                effect_col: None,
                 "trace_significant": None,
                 "resolved_F": F,
                 "resolved_p": p,
-                "resolved_effect_ms": resolved_effect,
+                f"resolved_{effect_col}": resolved_effect,
                 "resolved_significant": (
-                    p is not None and p < 0.05 and resolved_effect is not None and resolved_effect >= effect_threshold_ms
+                    p is not None and p < 0.05
+                    and resolved_effect is not None
+                    and resolved_effect >= effect_threshold
                 ),
                 "n": len(df)
             })
         else:
             # Not enough data for ANOVA, use standard deviation
-            std_dev = df["time"].std()
-            coeff_of_variation = std_dev / df["time"].mean()
+            std_dev = df[metric].std()
+            coeff_of_variation = std_dev / df[metric].mean() if df[metric].mean() != 0 else float('inf')
             results.append({
                 "process_name": process.name,
                 "test": "CV",
                 "trace_F": None,
                 "trace_p_or_cv": coeff_of_variation,
-                "trace_effect_ms": std_dev,
-                "trace_significant": coeff_of_variation > tolerance and std_dev > effect_threshold_ms,
+                effect_col: std_dev,
+                "trace_significant": coeff_of_variation > tolerance and std_dev > effect_threshold,
                 "resolved_F": None,
                 "resolved_p": None,
-                "resolved_effect_ms": None,
+                f"resolved_{effect_col}": None,
                 "resolved_significant": None,
                 "n": len(df)
             })
@@ -802,77 +910,105 @@ def anova_on_process_execution_times(db_manager, effect_threshold_ms=15000, tole
     return pd.DataFrame(results)
 
 
-def build_execution_predictors(db_manager, trace_names=None):
+def build_execution_metric_predictors(db_manager, metric="time", trace_names=None):
     """
-    Build execution predictors based on ANOVA analysis and linear regression models.
+    Build execution metric predictors based on ANOVA analysis and linear regression models.
 
     :param db_manager: An instance of NextflowTraceDBManager.
-    :param trace_names: A list of trace names to filter the analysis. If None, all traces are included.
-    :return: A tuple of two DataFrames: stats_based_config and model_based_config.
+    :param metric: The metric to predict ("time" or "memory").
+    :param trace_names: A list of trace names to filter the analysis.
+    :return: A tuple of two DataFrames: (stats_based_config, model_based_config).
+             stats_based_config: DataFrame with statistical summaries for processes/resolved processes
+                                 where trace effects are not significant.
+             model_based_config: DataFrame with linear regression model information for processes/resolved
+                                 processes where trace effects are significant.
+    :raises ValueError: If the metric is not "time" or "memory".
     """
+    # Validate metric parameter
+    if metric not in ["time", "memory"]:
+        raise ValueError("Metric must be either 'time' or 'memory'")
+
     # Step 1: Perform ANOVA analysis
-    anova_results = anova_on_process_execution_times(db_manager, trace_names=trace_names)
+    anova_results = anova_on_process_execution_metrics(db_manager, metric=metric, trace_names=trace_names)
 
     stats_based_config = []
     model_based_config = []
+
+    mean_col = f"mean_{metric}"
+    std_dev_col = f"std_dev_{metric}"
+    min_col = f"min_{metric}"
+    max_col = f"max_{metric}"
+    effect_col = f"{metric}_effect"
 
     # Step 2.1: For processes and resolved processes with non-impactful traces, extract statistical information
     for _, row in anova_results.iterrows():
         if not row['trace_significant'] and not row['resolved_significant']:
             # Per process stats
-            process_stats = get_execution_times_distribution_charasteristics(
-                db_manager, row['process_name'], trace_names=trace_names
+            process_stats = get_metric_distribution_characteristics(
+                db_manager, row['process_name'], metric=metric, trace_names=trace_names
             )
             stats_based_config.append({
                 'process_name': row['process_name'],
-                'mean_time': process_stats['mean_time'].iloc[0],
-                'std_dev_time': process_stats['std_dev_time'].iloc[0],
-                'min_time': process_stats['min_time'].iloc[0],
-                'max_time': process_stats['max_time'].iloc[0],
+                mean_col: process_stats[mean_col].iloc[0],
+                std_dev_col: process_stats[std_dev_col].iloc[0],
+                min_col: process_stats[min_col].iloc[0],
+                max_col: process_stats[max_col].iloc[0],
                 'trace_significant': row['trace_significant'],
-                'resolved_significant': row['resolved_significant']
+                'resolved_significant': row['resolved_significant'],
+                'metric': metric
             })
         elif not row['trace_significant'] and row['resolved_significant']:
             # Per resolved process stats
             rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(row['process_name'])
             for rp in rp_list:
-                process_stats = get_execution_times_distribution_charasteristics(
-                    db_manager, rp.name, is_resolved_name=True, trace_names=trace_names
+                process_stats = get_metric_distribution_characteristics(
+                    db_manager, rp.name, metric=metric, is_resolved_name=True, trace_names=trace_names
                 )
                 stats_based_config.append({
                     'process_name': rp.name,
-                    'mean_time': process_stats['mean_time'].iloc[0],
-                    'std_dev_time': process_stats['std_dev_time'].iloc[0],
-                    'min_time': process_stats['min_time'].iloc[0],
-                    'max_time': process_stats['max_time'].iloc[0],
+                    mean_col: process_stats[mean_col].iloc[0],
+                    std_dev_col: process_stats[std_dev_col].iloc[0],
+                    min_col: process_stats[min_col].iloc[0],
+                    max_col: process_stats[max_col].iloc[0],
                     'trace_significant': row['trace_significant'],
-                    'resolved_significant': row['resolved_significant']
+                    'resolved_significant': row['resolved_significant'],
+                    'metric': metric
                 })
 
         # Step 2.2: For processes and resolved processes with impactful traces, parameter-dependent prediction
         elif row['trace_significant'] and not row['resolved_significant']:
             # Per process prediction
-            model = extract_execution_time_linear_reg(
-                db_manager, process_name=row['process_name'], is_resolved_name=False, trace_names=trace_names
+            model = extract_metric_linear_reg(
+                db_manager,
+                process_name=row['process_name'],
+                metric=metric,
+                is_resolved_name=False,
+                trace_names=trace_names
             )
             model_based_config.append({
                 'process_name': row['process_name'],
                 'model': model,
                 'trace_significant': row['trace_significant'],
-                'resolved_significant': row['resolved_significant']
+                'resolved_significant': row['resolved_significant'],
+                'metric': metric
             })
         else:  # row['trace_significant'] and row['resolved_significant']:
             # Per resolved process prediction
             rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(row['process_name'])
             for rp in rp_list:
-                model = extract_execution_time_linear_reg(
-                    db_manager, process_name=rp.name, is_resolved_name=True, trace_names=trace_names
+                model = extract_metric_linear_reg(
+                    db_manager,
+                    process_name=rp.name,
+                    metric=metric,
+                    is_resolved_name=True,
+                    trace_names=trace_names
                 )
                 model_based_config.append({
                     'process_name': rp.name,
                     'model': model,
                     'trace_significant': row['trace_significant'],
-                    'resolved_significant': row['resolved_significant']
+                    'resolved_significant': row['resolved_significant'],
+                    'metric': metric
                 })
 
     # Convert the collected stats into DataFrames
@@ -882,27 +1018,37 @@ def build_execution_predictors(db_manager, trace_names=None):
     return stats_based_config, model_based_config
 
 
-def predict_time_from_param_values(db_manager, stats_based_config, model_based_config, pipeline_params_df):
+def predict_metric_from_param_values(db_manager, stats_based_config, model_based_config, pipeline_params_df, metric="time"):
     """
-    Predicts execution times for processes based on pipeline parameters.
+    Predicts execution metrics for processes based on pipeline parameters.
 
-    This function combines statistical predictions for processes with constant execution times
-    and model-based predictions for processes with variable execution times dependent on
-    pipeline parameters.
-
-    :param db_manager: An instance of NextflowTraceDBManager used to retrieve resolved process names.
-                      Can be None if no resolved process names need to be retrieved.
-    :param stats_based_config: DataFrame from build_execution_predictors containing statistics for processes
-                              with constant execution times. Contains columns 'process_name', 'mean_time',
-                              'std_dev_time', etc.
-    :param model_based_config: DataFrame from build_execution_predictors containing regression models
-                              for processes with variable execution times. Contains columns 'process_name',
-                              'model', 'trace_significant', etc.
-    :param pipeline_params_df: DataFrame from extractPipelineParameters containing parameter values.
-                              Must have columns 'param_name', 'reformatted_value', and 'type'.
-    :return: DataFrame with process names and their predicted execution times, including columns:
-             'process_name', 'predicted_time', 'rmse', 'confidence_interval', and 'formatted_time'.
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param stats_based_config: DataFrame from build_execution_metric_predictors with statistics.
+    :param model_based_config: DataFrame from build_execution_metric_predictors with regression models.
+    :param pipeline_params_df: DataFrame with parameter values (columns: 'param_name', 'reformatted_value', 'type').
+    :param metric: The metric to predict ("time" or "memory").
+    :return: DataFrame with process names and their predicted metrics, RMSE, confidence interval, and formatted value.
+    :raises ValueError: If the metric is not "time" or "memory", or if config DataFrames are for a different metric.
     """
+    # Validate metric parameter
+    if metric not in ["time", "memory"]:
+        raise ValueError("Metric must be either 'time' or 'memory'")
+
+    # Verify that configs are for the requested metric
+    if stats_based_config is not None and not stats_based_config.empty:
+        if 'metric' in stats_based_config.columns and stats_based_config['metric'].iloc[0] != metric:
+            raise ValueError(f"stats_based_config is for {stats_based_config['metric'].iloc[0]}, not {metric}")
+
+    if model_based_config is not None and not model_based_config.empty:
+        if 'metric' in model_based_config.columns and model_based_config['metric'].iloc[0] != metric:
+            raise ValueError(f"model_based_config is for {model_based_config['metric'].iloc[0]}, not {metric}")
+
+    # Column names for the specific metric
+    mean_col = f"mean_{metric}"
+    std_dev_col = f"std_dev_{metric}"
+    predicted_col = f"predicted_{metric}"
+    formatted_col = f"formatted_{metric}"
+
     # Convert pipeline parameters to a dictionary for easier lookup
     param_values = {}
     for _, row in pipeline_params_df.iterrows():
@@ -919,26 +1065,30 @@ def predict_time_from_param_values(db_manager, stats_based_config, model_based_c
     predictions = []
     processed_stats = []  # Track processes that already have statistics-based predictions
 
-    # Process statistics-based predictions (constant times)
+    # Process statistics-based predictions (constant metrics)
     if stats_based_config is not None and not stats_based_config.empty:
         for _, row in stats_based_config.iterrows():
             process_name = row['process_name']
-            mean_time = row['mean_time']
-            std_dev = row['std_dev_time']
+            mean_value = row[mean_col]
+            std_dev = row[std_dev_col]
             trace_significant = row.get('trace_significant', False)
             resolved_significant = row.get('resolved_significant', False)
 
             processed_stats.append(process_name)
 
-            predictions.append({
+            prediction = {
                 'process_name': process_name,
-                'predicted_time': mean_time,
-                'rmse': std_dev,  # Use std_dev as the uncertainty measure, like RMSE
+                predicted_col: mean_value,
+                'rmse': std_dev,  # Use std_dev as the uncertainty measure
                 'confidence_interval': [
-                    max(0, mean_time - 2 * std_dev),  # Lower bound (prevent negative times)
-                    mean_time + 2 * std_dev           # Upper bound
+                    max(0, mean_value - 2 * std_dev),  # Lower bound (prevent negative values)
+                    mean_value + 2 * std_dev           # Upper bound
                 ]
-            })
+            }
+
+            # Add formatted representation
+            prediction[formatted_col] = format_metric_value(mean_value, metric)
+            predictions.append(prediction)
 
             # Add predictions for resolved processes if this is a process-level statistic
             if db_manager is not None and not trace_significant and not resolved_significant:
@@ -951,18 +1101,22 @@ def predict_time_from_param_values(db_manager, stats_based_config, model_based_c
                         continue
 
                     # Add a prediction for this resolved process using the same statistics
-                    predictions.append({
+                    prediction = {
                         'process_name': rp.name,
-                        'predicted_time': mean_time,
+                        predicted_col: mean_value,
                         'rmse': std_dev,
                         'confidence_interval': [
-                            max(0, mean_time - 2 * std_dev),
-                            mean_time + 2 * std_dev
+                            max(0, mean_value - 2 * std_dev),
+                            mean_value + 2 * std_dev
                         ]
-                    })
+                    }
+
+                    # Add formatted representation
+                    prediction[formatted_col] = format_metric_value(mean_value, metric)
+                    predictions.append(prediction)
                     processed_stats.append(rp.name)
 
-    # Process model-based predictions (variable times)
+    # Process model-based predictions (variable metrics)
     if model_based_config is not None and not model_based_config.empty:
         processed_models = []
 
@@ -974,7 +1128,7 @@ def predict_time_from_param_values(db_manager, stats_based_config, model_based_c
             processed_models.append(process_name)
 
             # Add prediction for this process
-            add_model_prediction(predictions, process_name, model_info, param_values)
+            add_model_metric_prediction(predictions, process_name, model_info, param_values, metric)
 
             # Add predictions for resolved processes if this is a process-level model
             if db_manager is not None and trace_significant and not resolved_significant:
@@ -987,48 +1141,158 @@ def predict_time_from_param_values(db_manager, stats_based_config, model_based_c
                         continue
 
                     # Add a prediction for this resolved process using the same model
-                    add_model_prediction(predictions, rp.name, model_info, param_values)
+                    add_model_metric_prediction(predictions, rp.name, model_info, param_values, metric)
 
     # Convert to DataFrame and return
     predictions_df = pd.DataFrame(predictions)
 
-    # Add formatted time columns if predictions were successful
-    if 'predicted_time' in predictions_df.columns:
-        # Convert milliseconds to readable format (HH:MM:SS)
-        def format_ms(ms):
-            if pd.isna(ms):
-                return None
-            seconds = ms / 1000
-            hours = int(seconds // 3600)
-            minutes = int((seconds % 3600) // 60)
-            secs = int(seconds % 60)
-            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-
-        predictions_df['formatted_time'] = predictions_df['predicted_time'].apply(format_ms)
-
     return predictions_df
 
 
-def add_model_prediction(predictions, process_name, model_info, param_values):
-    """Helper function to add a model-based prediction to the predictions list"""
+def add_model_metric_prediction(predictions, process_name, model_info, param_values, metric="time"):
+    """
+    Helper function to add a model-based prediction to the predictions list.
+    Modifies the 'predictions' list in-place.
+
+    :param predictions: List to append the prediction to.
+    :param process_name: The name of the process.
+    :param model_info: Dictionary containing model information (model, rmse, selected_parameters, metric).
+    :param param_values: Dictionary of parameter values for prediction.
+    :param metric: The metric to predict ("time" or "memory").
+    :raises ValueError: If the metric is not "time" or "memory", or if model_info's metric mismatches.
+    """
+    # Validate metric parameter
+    if metric not in ["time", "memory"]:
+        raise ValueError("Metric must be either 'time' or 'memory'")
+
+    # Check if model_info's metric matches requested metric
+    if 'metric' in model_info and model_info['metric'] != metric:
+        raise ValueError(f"Model is for {model_info['metric']}, not {metric}")
+
     model = model_info['model']
     rmse = model_info['rmse']
     selected_params = list(model_info['selected_parameters'].keys())
+
+    predicted_col = f"predicted_{metric}"
+    formatted_col = f"formatted_{metric}"
 
     # Prepare input array for prediction
     X_pred = np.array([[param_values.get(param, 0) for param in selected_params]])
 
     # Make prediction
-    predicted_time = model.predict(X_pred)[0]
-    predictions.append({
+    predicted_value = model.predict(X_pred)[0]
+
+    prediction = {
         'process_name': process_name,
-        'predicted_time': predicted_time,
+        predicted_col: predicted_value,
         'rmse': rmse,
         'confidence_interval': [
-            max(0, predicted_time - 2 * rmse),  # Lower bound (prevent negative times)
-            predicted_time + 2 * rmse           # Upper bound
+            max(0, predicted_value - 2 * rmse),  # Lower bound (prevent negative values)
+            predicted_value + 2 * rmse           # Upper bound
         ]
-    })
+    }
+
+    # Add formatted representation
+    prediction[formatted_col] = format_metric_value(predicted_value, metric)
+    predictions.append(prediction)
+
+
+def identify_variable_pipeline_numerical_parameters(db_manager, trace_names=None):
+    """
+    Finds the parameters in the PipelineParams table that are numerical and have
+    different values across all traces. Converts parameter values to their appropriate
+    numerical types based on their type.
+
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param trace_names: Optional list of trace names to filter the results.
+    :return: A Pandas DataFrame with the parameters that are variable across the specified traces.
+             Columns: "param_name", "trace_name", "value" (converted to numerical type), "type".
+    :raises Exception: If an unsupported parameter type is encountered.
+    """
+    # SQL query to get the list of pipeline parameters used for the specified traces
+    query = """
+        SELECT pp.name AS param_name, t.name AS trace_name, ppv.value, pp.type
+        FROM PipelineParams pp
+        JOIN (
+            SELECT ppv.paramId FROM PipelineParamValues ppv
+            JOIN Traces t ON ppv.tId = t.tId
+            JOIN PipelineParams pp ON pp.paramId = ppv.paramId
+            WHERE pp.type IN ('Integer', 'Real', 'Boolean')
+            GROUP BY ppv.paramId
+            HAVING COUNT(DISTINCT ppv.value) > 1
+        ) AS J ON pp.paramId = J.paramId
+        JOIN PipelineParamValues ppv ON J.paramId = ppv.paramId
+        JOIN Traces t ON t.tId = ppv.tId
+    """
+
+    # Add filtering for trace names if provided
+    params = []
+    if trace_names:
+        placeholders = ",".join("?" for _ in trace_names)
+        query += f" WHERE t.name IN ({placeholders})"
+        params.extend(trace_names)
+
+    # Execute the query and fetch the results
+    cursor = db_manager.connection.cursor()
+    cursor.execute(query, params)
+    results = cursor.fetchall()
+
+    # Create a DataFrame from the query results
+    column_names = ["param_name", "trace_name", "value", "type"]
+    df = pd.DataFrame(results, columns=column_names)
+
+    # Convert parameter values to their appropriate numerical types
+    def convert_value(row):
+        if row["type"] == "Boolean":
+            return 1 if row["value"] == "True" else 0
+        elif row["type"] == "Integer":
+            return int(row["value"])
+        elif row["type"] == "Real":
+            return float(row["value"])
+        else:
+            raise Exception(f"Unsupported parameter type '{row['type']}' for parameter '{row['param_name']}'.")
+
+    df["value"] = df.apply(convert_value, axis=1)
+
+    return df
+
+
+def predict_execution_metrics(db_manager, pipeline_params_df, metrics=None):
+    """
+    Predict execution metrics (time and/or memory) for processes based on pipeline parameters.
+
+    :param db_manager: NextflowTraceDBManager instance.
+    :param pipeline_params_df: DataFrame with pipeline parameters (columns: 'param_name', 'reformatted_value', 'type').
+    :param metrics: List of metrics to predict (e.g., ["time", "memory"]). Defaults to ["time"].
+    :return: Dictionary of DataFrames with predictions for each metric.
+             Keys are metric names (e.g., "time", "memory"), values are DataFrames
+             containing predictions for that metric.
+    :raises ValueError: If an unsupported metric is requested.
+    """
+    if metrics is None:
+        metrics = ["time"]
+
+    results = {}
+
+    for metric in metrics:
+        if metric not in ["time", "memory"]:
+            raise ValueError(f"Unsupported metric: {metric}. Must be 'time' or 'memory'.")
+
+        # Build predictors for this metric
+        stats_config, model_config = build_execution_metric_predictors(db_manager, metric=metric)
+
+        # Generate predictions
+        predictions = predict_metric_from_param_values(
+            db_manager,
+            stats_config,
+            model_config,
+            pipeline_params_df,
+            metric=metric
+        )
+
+        results[metric] = predictions
+
+    return results
 
 
 if __name__ == "__main__":
@@ -1091,32 +1355,56 @@ if __name__ == "__main__":
     # Print database information
     db_manager.printDBInfo()
 
-    anova_results = anova_on_process_execution_times(db_manager)
+    # Run the same analyses as in the original file but using the multi-metric functions
+    print("\n## Running analyses with time metric:")
+
+    # ANOVA on process execution times
+    anova_results = anova_on_process_execution_metrics(db_manager, metric="time")
     print("\n## ANOVA results on process execution times:")
     anova_results = anova_results.sort_values(by=["process_name"], ascending=[True])
     print(anova_results)
 
-    df = analyze_process_execution_correlation(db_manager, "generate_binconfig")
+    # Correlation analysis for "generate_binconfig"
+    df = analyze_process_execution_metric_correlation(db_manager, "generate_binconfig", metric="time")
     print("\n## Correlation results:")
     print(df)
 
-    extract_execution_time_linear_reg(db_manager, "generate_binconfig", top_n=3, rmse_threshold=10000, print_info=True)
-
-    extract_execution_time_linear_reg(
+    # Linear regression for "generate_binconfig"
+    extract_metric_linear_reg(
         db_manager,
-        "fcal1:corr_fcal:do_correlation",
+        process_name="generate_binconfig",
+        metric="time",
+        top_n=3,
+        rmse_threshold=10000,
+        print_info=True
+    )
+
+    # Linear regression for specific resolved processes
+    extract_metric_linear_reg(
+        db_manager,
+        process_name="fcal1:corr_fcal:do_correlation",
+        metric="time",
         top_n=9,
         rmse_threshold=10000,
         is_resolved_name=True,
-        print_info=True)
+        print_info=True
+    )
 
-    extract_execution_time_linear_reg(
+    extract_metric_linear_reg(
         db_manager,
-        "frb:corr_field:do_correlation",
+        process_name="frb:corr_field:do_correlation",
+        metric="time",
         top_n=9,
         rmse_threshold=10000,
         is_resolved_name=True,
-        print_info=True)
+        print_info=True
+    )
+
+    # Example of how to use the predict_execution_metrics function
+    print("\n## Example of predicting execution metrics:")
+    # This would require pipeline_params_df to be defined
+    # predictions = predict_execution_metrics(db_manager, pipeline_params_df, metrics=["time"])
+    # print(predictions["time"])
 
     db_manager.close()
     print("Connection closed.")

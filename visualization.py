@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import hsv_to_rgb
 
-from nf_trace_db_analyzer import extract_execution_time_linear_reg
+from nf_trace_db_analyzer import extract_metric_linear_reg
 from nf_trace_db_manager import NextflowTraceDBManager
 
 
@@ -242,17 +242,18 @@ def plot_execution_time_predictions(db_manager: NextflowTraceDBManager, process_
 
     # Compute the linear model if not provided
     if linear_model is None:
-        linear_model = extract_execution_time_linear_reg(
+        linear_model = extract_metric_linear_reg(
             db_manager,
             process_name,
             print_info=True,
             is_resolved_name=is_resolved_name,
-            trace_names=traces_for_model
+            trace_names=traces_for_model,
+            metric_name="time"
         )
         print(f"\nLinear model expression: {linear_model['expression']}")
 
     # Retrieve execution times for the given traces
-    execution_times = db_manager.process_executions_manager.getExecutionTimesForProcessAndTraces(
+    execution_times = db_manager.process_executions_manager.getExecutionMetricsForProcessAndTraces(
         process_name, trace_names, is_resolved_name=is_resolved_name
     )
     if execution_times.empty:
