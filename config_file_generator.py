@@ -90,60 +90,166 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
     :param output_config_file: A Path object specifying the output file for the generated configuration.
     :return: None. Writes the configuration to the specified file.
     """
-    max_nb_retries = 3
+    max_nb_retries = 5
+    memory_margin = 1.10
 
     # Build execution predictors
-    stats_based_config, model_based_config = build_execution_metric_predictors(db_manager, metric="time")
+    stats_based_time, model_based_time, no_time_model = build_execution_metric_predictors(db_manager, metric="time")
+    stats_based_memory, model_based_memory, no_memory_model = build_execution_metric_predictors(db_manager, metric="memory")
 
-    # Step 3: Generate the Nextflow configuration file
+    # Create a consolidated dictionary of process configs
+    process_configs = {}
+
+    # Add processes from stats-based time models
+    for _, row in stats_based_time.iterrows():
+        process_name = row['process_name']
+        if process_name not in process_configs:
+            process_configs[process_name] = {
+                'process_name': process_name,
+                'time_model_type': None,
+                'time_model': None,
+                'memory_model_type': None,
+                'memory_model': None
+            }
+        process_configs[process_name]['time_model_type'] = 'stats'
+        process_configs[process_name]['time_model'] = {
+            'mean_time': row['mean_time'],
+            'std_dev_time': row['std_dev_time']
+        }
+
+    # Add processes from model-based time models
+    for _, row in model_based_time.iterrows():
+        process_name = row['process_name']
+        if process_name not in process_configs:
+            process_configs[process_name] = {
+                'process_name': process_name,
+                'time_model_type': None,
+                'time_model': None,
+                'memory_model_type': None,
+                'memory_model': None
+            }
+        process_configs[process_name]['time_model_type'] = 'model'
+        process_configs[process_name]['time_model'] = row['model']
+
+    # Add processes from stats-based memory models
+    for _, row in stats_based_memory.iterrows():
+        process_name = row['process_name']
+        if process_name not in process_configs:
+            process_configs[process_name] = {
+                'process_name': process_name,
+                'time_model_type': None,
+                'time_model': None,
+                'memory_model_type': None,
+                'memory_model': None
+            }
+        process_configs[process_name]['memory_model_type'] = 'stats'
+        process_configs[process_name]['memory_model'] = {
+            'mean_memory': row['mean_memory'],
+            'std_dev_memory': row['std_dev_memory'],
+            'max_memory': row['max_memory']
+        }
+
+    # Add processes from model-based memory models
+    for _, row in model_based_memory.iterrows():
+        process_name = row['process_name']
+        if process_name not in process_configs:
+            process_configs[process_name] = {
+                'process_name': process_name,
+                'time_model_type': None,
+                'time_model': None,
+                'memory_model_type': None,
+                'memory_model': None
+            }
+        process_configs[process_name]['memory_model_type'] = 'model'
+        process_configs[process_name]['memory_model'] = row['model']
+
+    # Generate the Nextflow configuration file
     with open(output_config_file, 'w') as file:
         # Write the process block header
         file.write(f"// Config file generated from a traces database on the {datetime.datetime.now()}\n\n")
+
+        # TIME CONFIGURATION TYPES
+        file.write("// TIME CONFIGURATION TYPES:\n")
+        file.write("// - stats-based: mean execution time plus 2.6 times the standard deviation\n")
+        file.write("// - model-based: parameter-dependent linear regression model plus 2.6 times the RMSE\n\n")
+
+        # Include all original comment blocks for stats-based configuration
+        file.write("// Per-process time limits corresponding observed mean execution time plus 2.6 times the std dev.\n")
+        file.write("// 60 extra seconds are added to account for the early termination of jobs by Slurm,\n")
+        file.write("// as requested by Nextflow job with the B:USR2 signal.\n\n")
+
+        # Include all original comment blocks for parameter-dependent configuration
+        file.write("// Per-process time limits corresponding to parameter-dependent execution time.\n")
+        file.write("// 2.6 times the RMSE of the linear regression is added to the expression to encompass 99% of values.\n")
+        file.write("// 60 extra seconds are added to account for the early termination of jobs by Slurm,\n")
+        file.write("// as requested by Nextflow job with the B:USR2 signal.\n\n")
+
+        # MEMORY CONFIGURATION TYPES
+        file.write("// MEMORY CONFIGURATION TYPES:\n")
+        file.write("// - stats-based: maximum observed memory usage with safety margin\n")
+        file.write("// - model-based: parameter-dependent linear regression model plus safety margin\n\n")
+
         file.write("process {\n")
         file.write("    // Default error handling strategy for all process errors.\n")
         file.write("    errorStrategy = 'retry'\n")
         file.write(f"    maxRetries = {max_nb_retries}\n\n")
 
-        # Print content for stats-based configuration
-        file.write("    // Per-process time limits corresponding observed mean execution time plus 2 times the std dev.\n")
-        file.write("    // 60 extra seconds are added to account for the early termination of jobs by Slurm,\n")
-        file.write("    // as requested by Nextflow job with the B:USR2 signal.\n")
+        file.write("    // Per-process resource limits\n")
+        file.write("    // Time resource requirements are increased by 25% with each retry attempt\n\n")
+        file.write("    // Memory resource requirements are increased by 10% with each retry attempt\n\n")
 
-        for index, row in stats_based_config.iterrows():
-            process = row['process_name']
-            mean_time = row['mean_time'] / 1000.0  # Convert to seconds
-            std_dev_time = row['std_dev_time'] / 1000.0  # Convert to seconds
+        # Process each configuration entry
+        for process_name, config in process_configs.items():
+            file.write(f"    withName: '{process_name}' {{\n")
 
-            file.write(f"    withName: '{process}' {{\n")
-            file.write(f"        time = {{ ({mean_time:.2f} + 2.0 * {std_dev_time:.2f} + 60.0) * Math.pow(1.25, (task.attempt - 1)) * 1.s }}\n")
-            file.write("    }\n\n")
+            # Time configuration
+            if config['time_model_type'] == 'stats':
+                mean_time = config['time_model']['mean_time'] / 1000.0  # Convert to seconds
+                std_dev_time = config['time_model']['std_dev_time'] / 1000.0  # Convert to seconds
+                file.write(
+                    f"        time = {{ ({mean_time:.2f} + 2.6 * {std_dev_time:.2f} + 60.0) * Math.pow(1.25, (task.attempt - 1)) * 1.s }}  // stats-based\n")
 
-        # Print content for parameter-dependent configuration
-        file.write("    // Per-process time limits corresponding to parameter-dependent execution time.\n")
-        file.write("    // 2 times the RMSE of the linear regression is added to the expression to encompass 95% of values.\n")
-        file.write("    // 60 extra seconds are added to account for the early termination of jobs by Slurm,\n")
-        file.write("    // as requested by Nextflow job with the B:USR2 signal.\n")
+            elif config['time_model_type'] == 'model':
+                model = config['time_model']['model']
+                params = config['time_model']['selected_parameters']
+                rmse = config['time_model']['rmse']
 
-        for index, row in model_based_config.iterrows():
-            process = row['process_name']
-            model = row['model']['model']
-            params = row['model']['selected_parameters']
-            rmse = row['model']['rmse']
+                # Generate the expression for the linear regression model
+                expression = f"{(model.intercept_):.0f} + " + " + ".join(
+                    [f"({coef:.0f} * {f'params.{p}' if not params[p]['type'] == 'Boolean' else f'(params.{p} ? 1.0 : 0.0)'} )" for coef,
+                     p in zip(model.coef_, params.keys())]
+                )
 
-            # Generate the expression for the linear regression model
-            expression = f"{(model.intercept_):.0f} + " + " + ".join(
-                [f"({coef:.0f} * {f'params.{p}' if not params[p]['type'] == 'Boolean' else f'(params.{p} ? 1.0 : 0.0)'} )" for coef,
-                    p in zip(model.coef_, params.keys())]
-            )
+                # Add RMSE to the expression
+                expression += f" + 2.6 * {rmse:.0f}"
 
-            # Add RMSE to the expression
-            expression += f" + 2.0 * {rmse:.0f}"
+                # Divide by 1000.0 to convert to seconds
+                expression = f"({expression}) / 1000.0"
 
-            # Divide by 1000.0 to convert to seconds
-            expression = f"({expression}) / 1000.0"
+                file.write(f"        time = {{ ({expression} + 60.0) * Math.pow(1.25, (task.attempt - 1)) * 1.s }}  // model-based\n")
 
-            file.write(f"    withName: '{process}' {{\n")
-            file.write(f"        time = {{ ({expression} + 60.0) * Math.pow(1.25, (task.attempt - 1)) * 1.s }}\n")
+            # Memory configuration
+            if config['memory_model_type'] == 'stats':
+                max_memory_mb = ceil(config['memory_model']['max_memory'] / (1024 * 1024)) if config['memory_model']['max_memory'] > 0 else 1
+                memory_config = f"memory = {{ ({max_memory_mb} * Math.pow({memory_margin}, task.attempt))  * 1.MB }}  // stats-based"
+                file.write(f"        {memory_config}\n")
+
+            elif config['memory_model_type'] == 'model':
+                model = config['memory_model']['model']
+                params = config['memory_model']['selected_parameters']
+                rmse = config['memory_model']['rmse']
+
+                # Generate the expression for the linear regression model
+                expression = f"{(model.intercept_):.0f} + " + " + ".join(
+                    [f"({coef:.0f} * {f'params.{p}' if not params[p]['type'] == 'Boolean' else f'(params.{p} ? 1.0 : 0.0)'} )" for coef,
+                     p in zip(model.coef_, params.keys())]
+                )
+
+                # Add RMSE and convert to MB
+                expression = f"(({expression} + 2.6 * {rmse:.0f}) / (1024 * 1024))"
+                memory_config = f"memory = {{ (Math.ceil({expression}) * Math.pow({memory_margin}, task.attempt))  * 1.MB }}  // model-based"
+                file.write(f"        {memory_config}\n")
+
             file.write("    }\n\n")
 
         # Footer for the process block
@@ -159,7 +265,7 @@ def generate_markdown_summary(db_manager, output_markdown_file):
     :return: None. Writes the summary to the specified markdown file.
     """
     # Build execution predictors
-    stats_based_config, model_based_config = build_execution_metric_predictors(db_manager, metric="time")
+    stats_based_config, model_based_config, no_model = build_execution_metric_predictors(db_manager, metric="time")
 
     # Prepare the markdown content
     markdown_lines = [
@@ -206,6 +312,13 @@ def generate_markdown_summary(db_manager, output_markdown_file):
 
         markdown_lines.append(
             f"| {process_name} | {predictor_type} | {per_trace} | {per_resolved} | {parameters} | {rmse} | `{expression}` | {hinted_params_str} |"
+        )
+
+    # Add a note for processes without models
+    for _, row in no_model.iterrows():
+        process_name = row["process_name"]
+        markdown_lines.append(
+            f"| {process_name} | No model | {row['trace_significant']} | {row['resolved_significant']} | N/A | N/A | N/A | None |"
         )
 
     # Write the markdown content to the file
