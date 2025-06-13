@@ -256,22 +256,31 @@ def generate_nextflow_config_from_db(db_manager: NextflowTraceDBManager, output_
         file.write("}\n")
 
 
-def generate_markdown_summary(db_manager, output_markdown_file):
+def generate_markdown_summary(db_manager, output_markdown_file, metric="time"):
     """
     Generate a markdown file summarizing the predictors obtained from build_execution_predictors.
 
     :param db_manager: An instance of NextflowTraceDBManager.
     :param output_markdown_file: Path to the output markdown file.
+    :param metric: The metric to analyze ("time" or "memory").
     :return: None. Writes the summary to the specified markdown file.
     """
-    # Build execution predictors
-    stats_based_config, model_based_config, no_model = build_execution_metric_predictors(db_manager, metric="time")
+    # Validate metric parameter
+    if metric not in ["time", "memory"]:
+        raise ValueError("Metric must be either 'time' or 'memory'")
+
+    # Build execution predictors for the specified metric
+    stats_based_config, model_based_config, no_model = build_execution_metric_predictors(db_manager, metric=metric)
+
+    # Set up metric-specific formatting
+    metric_unit = "seconds" if metric == "time" else "MB"
+    metric_divisor = 1000.0 if metric == "time" else (1024 * 1024)  # Convert ms to s or bytes to MB
 
     # Prepare the markdown content
     markdown_lines = [
-        "# Execution Predictors Summary",
+        f"# {metric.capitalize()} Predictors Summary",
         "",
-        "| Process Name | Predictor Type | Per Trace | Per Resolved | Parameters | RMSE/Std Dev | Prediction Expression | Hinted Params |",
+        f"| Process Name | Predictor Type | Per Trace | Per Resolved | Parameters | RMSE/Std Dev ({metric_unit}) | Prediction Expression | Hinted Params |",
         "|--------------|----------------|-----------|--------------|------------|-------------:|------------------------|----------------|"
     ]
 
@@ -279,11 +288,19 @@ def generate_markdown_summary(db_manager, output_markdown_file):
     for _, row in stats_based_config.iterrows():
         process_name = row["process_name"]
         predictor_type = "std dev"
-        per_trace = row["trace_significant"]  # Use trace_significant for per_trace
-        per_resolved = row["resolved_significant"]  # Use resolved_significant for per_resolved
+        per_trace = row["trace_significant"]
+        per_resolved = row["resolved_significant"]
         parameters = "N/A"
-        std_dev = f"{row['std_dev_time'] / 1000.0:.2f}"  # Convert to seconds
-        expression = f"{row['mean_time'] / 1000.0:.2f}"
+
+        # Format values based on metric
+        if metric == "time":
+            std_dev = f"{row[f'std_dev_{metric}'] / metric_divisor:.2f}"
+            expression = f"{row[f'mean_{metric}'] / metric_divisor:.2f}"
+        else:  # memory
+            std_dev = f"{row[f'std_dev_{metric}'] / metric_divisor:.2f}"
+            mean_memory = row[f'mean_{metric}'] / metric_divisor
+            max_memory = row[f'max_{metric}'] / metric_divisor
+            expression = f"mean: {mean_memory:.2f}, max: {max_memory:.2f}"
 
         # Get hinted parameters for the process
         hinted_params = db_manager.process_params_hints_manager.getHintedParamNamesByProcessName(
@@ -298,11 +315,11 @@ def generate_markdown_summary(db_manager, output_markdown_file):
     for _, row in model_based_config.iterrows():
         process_name = row["process_name"]
         predictor_type = "linear reg"
-        per_trace = row["trace_significant"]  # Use trace_significant for per_trace
-        per_resolved = row["resolved_significant"]  # Use resolved_significant for per_resolved
+        per_trace = row["trace_significant"]
+        per_resolved = row["resolved_significant"]
         model = row["model"]
         parameters = ", ".join(model["selected_parameters"].keys())
-        rmse = f"{model['rmse'] / 1000.0:.2f}"  # Convert to seconds
+        rmse = f"{model['rmse'] / metric_divisor:.2f}"
         expression = model["expression"]
 
         # Get hinted parameters for the process
@@ -315,17 +332,22 @@ def generate_markdown_summary(db_manager, output_markdown_file):
         )
 
     # Add a note for processes without models
-    for _, row in no_model.iterrows():
-        process_name = row["process_name"]
-        markdown_lines.append(
-            f"| {process_name} | No model | {row['trace_significant']} | {row['resolved_significant']} | N/A | N/A | N/A | None |"
-        )
+    if not no_model.empty:
+        markdown_lines.append("\n## Processes Without Models")
+        markdown_lines.append("\n| Process Name | Reason | Per Trace | Per Resolved |")
+        markdown_lines.append("|-------------|--------|-----------|--------------|")
+
+        for _, row in no_model.iterrows():
+            process_name = row["process_name"]
+            markdown_lines.append(
+                f"| {process_name} | No model | {row['trace_significant']} | {row['resolved_significant']} |"
+            )
 
     # Write the markdown content to the file
     with open(output_markdown_file, "w") as file:
         file.write("\n".join(markdown_lines))
 
-    print(f"Markdown summary written to {output_markdown_file}")
+    print(f"{metric.capitalize()} markdown summary written to {output_markdown_file}")
 
 
 if __name__ == "__main__":
@@ -334,5 +356,6 @@ if __name__ == "__main__":
     db_manager.connect()
     output_config_file = Path("./dat/celebi_from_db.config")
 
-    generate_markdown_summary(db_manager, "./dat/celebi_predictors_summary.md")
+    generate_markdown_summary(db_manager, "./dat/celebi_time_predictors_summary.md", metric="time")
+    generate_markdown_summary(db_manager, "./dat/celebi_memory_predictors_summary.md", metric="memory")
     generate_nextflow_config_from_db(db_manager, output_config_file)
