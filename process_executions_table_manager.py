@@ -82,7 +82,7 @@ class ProcessExecutionTableManager:
                 time=row["realtime"].total_seconds() * 1000.0,
                 cpu=row["cpu_model"],
                 nbCores=row["cpus"],
-                memory=row["memory"] if not pandas.isna(row["memory"]) else None
+                memory=row["peak_rss"] if not pandas.isna(row["memory"]) else None
             )
             self.addProcessExecution(execution_entry)
 
