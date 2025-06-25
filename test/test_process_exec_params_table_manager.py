@@ -1,5 +1,4 @@
 import unittest
-from unittest.mock import patch
 from nf_trace_db_manager import NextflowTraceDBManager
 from process_exec_params_table_manager import ProcessExecParamsTableManager, ProcessExecParamEntry
 from processes_table_manager import ProcessEntry
@@ -34,8 +33,14 @@ class TestProcessExecParamsTableManager(unittest.TestCase):
         # Add process execution entries
         self.db_manager.process_executions_manager.addAllProcessExecutions(
             [
-                ProcessExecutionEntry(eId=0, tId=1, rId=1, instance=1, hash="hash_1", time=123.45, cpu="Intel Core i7", nbCores=4, memory=1024.0),
-                ProcessExecutionEntry(eId=0, tId=1, rId=1, instance=2, hash="hash_2", time=111.11, cpu="AMD Ryzen 7", nbCores=8, memory=2048.0),
+                ProcessExecutionEntry(
+                    eId=0, tId=1, rId=1, instance=1, hash="hash_1", time=123.45, cpu="Intel Core i7",
+                    nbCores=4, memory=1024.0, allocated_mem=2048.0
+                ),
+                ProcessExecutionEntry(
+                    eId=0, tId=1, rId=1, instance=2, hash="hash_2", time=111.11, cpu="AMD Ryzen 7",
+                    nbCores=8, memory=2048.0, allocated_mem=4096.0
+                ),
             ]
         )
 

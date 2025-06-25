@@ -19,7 +19,7 @@ class ProcessExecutionTableManager:
         """
         cursor = self.connection.cursor()
         cursor.execute(
-            "INSERT INTO ProcessExecutions (tId, rId, instance, hash, time, cpu, nbCores, memory) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            "INSERT INTO ProcessExecutions (tId, rId, instance, hash, time, cpu, nbCores, memory, allocated_mem) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
             (execution_entry.tId,
              execution_entry.rId,
              execution_entry.instance,
@@ -27,7 +27,8 @@ class ProcessExecutionTableManager:
              execution_entry.time,
              execution_entry.cpu,
              execution_entry.nbCores,
-             execution_entry.memory),
+             execution_entry.memory,
+             execution_entry.allocated_mem)  # Include allocated_mem in the insert statement,
         )
         self.connection.commit()
 
@@ -82,7 +83,8 @@ class ProcessExecutionTableManager:
                 time=row["realtime"].total_seconds() * 1000.0,
                 cpu=row["cpu_model"],
                 nbCores=row["cpus"],
-                memory=row["peak_rss"] if not pandas.isna(row["memory"]) else None
+                memory=row["peak_rss"] if not pandas.isna(row["memory"]) else None,
+                allocated_mem= row["memory"] if not pandas.isna(row["memory"]) else None
             )
             self.addProcessExecution(execution_entry)
 
@@ -94,12 +96,12 @@ class ProcessExecutionTableManager:
         :return: A ProcessExecutionEntry instance if found, None otherwise.
         """
         cursor = self.connection.cursor()
-        cursor.execute("SELECT eId, tId, rId, instance, hash, time, cpu, nbCores, memory FROM ProcessExecutions WHERE hash = ?;", (hash_value,))
+        cursor.execute("SELECT eId, tId, rId, instance, hash, time, cpu, nbCores, memory, allocated_mem FROM ProcessExecutions WHERE hash = ?;", (hash_value,))
         row = cursor.fetchone()
 
         if row:
             return ProcessExecutionEntry(eId=row[0], tId=row[1], rId=row[2], instance=row[3], hash=row[4],
-                                         time=row[5], cpu=row[6], nbCores=row[7], memory=row[8])
+                                         time=row[5], cpu=row[6], nbCores=row[7], memory=row[8], allocated_mem=row[9])
         return None
 
     def getExecutionByResolvedIdAndInstanceAndTraceId(self, rId, instance, tId):
@@ -113,14 +115,14 @@ class ProcessExecutionTableManager:
         """
         cursor = self.connection.cursor()
         cursor.execute(
-            "SELECT eId, tId, rId, instance, hash, time, cpu, nbCores, memory FROM ProcessExecutions WHERE rId = ? AND instance = ? AND tId = ?;",
+            "SELECT eId, tId, rId, instance, hash, time, cpu, nbCores, memory, allocated_mem FROM ProcessExecutions WHERE rId = ? AND instance = ? AND tId = ?;",
             (rId, instance, tId),
         )
         row = cursor.fetchone()
 
         if row:
             return ProcessExecutionEntry(eId=row[0], tId=row[1], rId=row[2], instance=row[3], hash=row[4],
-                                         time=row[5], cpu=row[6], nbCores=row[7], memory=row[8])
+                                         time=row[5], cpu=row[6], nbCores=row[7], memory=row[8], allocated_mem=row[9])
         return None
 
     def getAllProcessExecutions(self):
@@ -130,7 +132,7 @@ class ProcessExecutionTableManager:
         :return: A list of ProcessExecutionEntry instances.
         """
         cursor = self.connection.cursor()
-        cursor.execute("SELECT eId, tId, rId, instance, hash, time, cpu, nbCores, memory FROM ProcessExecutions;")
+        cursor.execute("SELECT eId, tId, rId, instance, hash, time, cpu, nbCores, memory, allocated_mem FROM ProcessExecutions;")
         rows = cursor.fetchall()
 
         return [
@@ -143,7 +145,8 @@ class ProcessExecutionTableManager:
                 time=row[5],
                 cpu=row[6],
                 nbCores=row[7],
-                memory=row[8])
+                memory=row[8],
+                allocated_mem=row[9])
             for row in rows
         ]
 
@@ -183,6 +186,7 @@ class ProcessExecutionTableManager:
                 pe.instance,
                 pe.cpu,
                 pe.memory,
+                pe.allocated_mem,
                 t.name AS trace_name,
                 rpn.name AS resolved_process_name
             FROM
@@ -211,7 +215,7 @@ class ProcessExecutionTableManager:
         if execution_data:
             df = pd.DataFrame(execution_data,
                               columns=["eId", "execution_time", "instance",
-                                       "cpu", "memory", "trace_name", "resolved_process_name"])
+                                       "cpu", "memory", "allocated_mem", "trace_name", "resolved_process_name"])
             all_results.append(df)
         else:
             print(f"No execution times found for process '{process_name}'")
@@ -252,7 +256,7 @@ class ProcessExecutionTableManager:
         return process_to_cpu_mapping
 
 class ProcessExecutionEntry:
-    def __init__(self, eId, tId, rId, instance, hash, time, cpu, nbCores, memory):
+    def __init__(self, eId, tId, rId, instance, hash, time, cpu, nbCores, memory, allocated_mem):
         """
         Initialize a ProcessExecutionEntry instance.
 
@@ -265,6 +269,7 @@ class ProcessExecutionEntry:
         :param cpu: Name of of CPUs used (string).
         :param nbCores: Number of CPU core used (integer).
         :param memory: Memory usage in bytes (float or None). Set to None if a per-core requirement was used.
+        :param allocated_mem: Memory allocated to the process (float or None). Set to None if a per-core requirement was used.
         """
         self.eId = eId
         self.tId = tId
@@ -275,10 +280,12 @@ class ProcessExecutionEntry:
         self.cpu = cpu
         self.nbCores = nbCores
         self.memory = memory
+        self.allocated_mem = allocated_mem
 
     def __repr__(self):
         return (
             f"ProcessExecutionEntry(eId={self.eId}, tId={self.tId}, rId={self.rId}, "
             f"instance={self.instance}, hash='{self.hash}', time={self.time}, "
-            f"cpu='{self.cpu}', nbCores={self.nbCores}, memory={self.memory})"
+            f"cpu='{self.cpu}', nbCores={self.nbCores}, memory={self.memory},"
+            f"allocated_mem={self.allocated_mem})"
         )

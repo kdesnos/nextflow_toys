@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS ProcessExecutions (
 	cpu TEXT NOT NULL,
 	nbCores INTEGER NOT NULL,
 	memory Real, -- Set to NULL in case a user "per-core" requirement was used, thus bypassing nextflow management.
+	allocated_mem Real,
 	
 	UNIQUE (tId, rId, instance, hash)
 );
