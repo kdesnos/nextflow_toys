@@ -60,9 +60,21 @@ jobs:
       run: |
         # Discover all test files
         test_files=$(find test -name "test_*.py")
-
+        
+        # Track failures
+        failed=0
+        
         # Run each test file individually
         for test_file in $test_files; do
           echo "Running tests in $test_file..."
-          python -m unittest "$test_file" -v || true
+          if ! python -m unittest "$test_file" -v; then
+            echo "::error::Tests in $test_file failed"
+            failed=1
+          fi
         done
+        
+        # Exit with failure if any test failed
+        if [ $failed -ne 0 ]; then
+          echo "::error::One or more test files failed"
+          exit 1
+        fi
