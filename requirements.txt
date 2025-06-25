@@ -1,7 +1,7 @@
 pandas
 networkx
-spicy
-statsmodels
+scipy==1.15.3
+statsmodels==0.14.4
 watchdog
 scikit-learn
 lxml

@@ -1,18 +1,8 @@
+from nf_trace_db_manager import NextflowTraceDBManager
 import unittest
 
 import pandas as pd
-from nf_trace_db_analyzer import (
-    analyze_process_execution_metric_correlation,
-    analyze_process_execution_metric_consistency,
-    anova_on_process_execution_metrics,
-    get_metric_distribution_characteristics,
-    identify_process_execution_metric_consistency,
-    identify_variable_pipeline_numerical_parameters,
-    print_process_execution_metric_consistency,
-    summarize_metric_consistency_analysis,
-    extract_metric_linear_reg
-)
-from nf_trace_db_manager import NextflowTraceDBManager
+from nf_trace_db_analyzer import analyze_process_execution_metric_correlation, analyze_process_execution_metric_consistency, anova_on_process_execution_metrics, get_metric_distribution_characteristics, identify_process_execution_metric_consistency, identify_variable_pipeline_numerical_parameters, print_process_execution_metric_consistency, summarize_metric_consistency_analysis, extract_metric_linear_reg
 
 
 class TestNextflowTraceDBAnalyzer(unittest.TestCase):
