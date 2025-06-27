@@ -6,10 +6,9 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
-import warnings
-from statsmodels.tools.sm_exceptions import IterationLimitWarning, ConvergenceWarning
 
 from nf_trace_db_manager import NextflowTraceDBManager
+from amdahl_linear_regressor import AmdahlLinearRegressor
 
 
 def get_metric_default_threshold(metric):
@@ -602,7 +601,7 @@ def extract_metric_linear_reg(db_manager, process_name, metric="time", top_n=3, 
     if varying_params.empty:
         raise Exception("No varying pipeline parameters found.")
 
-    # Step 2: Retrieve execution metrics for the given process
+    # Step 2: Retrieve execution metrics for the given process and number of cores parameter
     execution_metrics = db_manager.process_executions_manager.getExecutionMetricsForProcessAndTraces(
         process_name, trace_names=trace_names, is_resolved_name=is_resolved_name
     )
@@ -620,6 +619,11 @@ def extract_metric_linear_reg(db_manager, process_name, metric="time", top_n=3, 
         execution_df = execution_metrics[["execution_time", "trace_name"]]
         execution_df = execution_df.rename(columns={"execution_time": execution_col})
 
+    # Check if "nbCores" contains several distinct values and include it if necessary
+    if "nbCores" in execution_metrics.columns and execution_metrics["nbCores"].nunique() > 1:
+        execution_df["nbCores"] = execution_metrics["nbCores"]
+        execution_df["inverted_nbCores"] = 1 / execution_df["nbCores"]
+
     # Step 3: Pivot the varying_params DataFrame to have one row per trace and columns for each parameter
     param_df = varying_params.pivot(index="trace_name", columns="param_name", values="value").reset_index()
 
@@ -635,6 +639,20 @@ def extract_metric_linear_reg(db_manager, process_name, metric="time", top_n=3, 
     else:
         available_params = list(param_df.columns)
         available_params.remove("trace_name")
+
+    # Create a dictionary mapping parameter names to their types
+    param_types = {}
+    for param in available_params:
+        # Find the type in varying_params
+        param_info = varying_params[varying_params["param_name"] == param]
+        param_types[param] = param_info["type"].iloc[0]
+
+    # Ensure "nbCores" is included in available_params if it exists in execution_df
+    if "nbCores" in execution_df.columns:
+        available_params.append("nbCores")
+        param_types["nbCores"] = "Integer"
+        available_params.append("inverted_nbCores")
+        param_types["inverted_nbCores"] = "Real"
 
     # Step 6: Prepare data for regression
     y = merged_df[execution_col].values
@@ -675,8 +693,8 @@ def extract_metric_linear_reg(db_manager, process_name, metric="time", top_n=3, 
             rounded_temp_rmse = round(temp_rmse)
             rounded_best_rmse = round(best_rmse)
 
-            # Get the parameter type
-            param_type = varying_params[varying_params["param_name"] == param]["type"].iloc[0]
+            # Get the parameter type from our dictionary
+            param_type = param_types[param]
 
             # Keep track of the best parameter, prioritizing Boolean > Integer > Real
             if (
@@ -702,9 +720,9 @@ def extract_metric_linear_reg(db_manager, process_name, metric="time", top_n=3, 
 
         # Update the selected parameters and model if the best parameter improves the RMSE
         selected_params.append(best_param)
-        # Store parameter info (name and type)
+        # Store parameter info (name and type) using our dictionary
         selected_params_info[best_param] = {
-            "type": varying_params[varying_params["param_name"] == best_param]["type"].iloc[0]
+            "type": param_types[best_param]
         }
 
         available_params.remove(best_param)
@@ -731,6 +749,180 @@ def extract_metric_linear_reg(db_manager, process_name, metric="time", top_n=3, 
         "rmse": rmse,
         "selected_parameters": selected_params_info,
         "metric": metric
+    }
+
+    return model_info
+
+
+def extract_amdahl_linear_reg(db_manager, process_name, metric="time", top_n=3, rmse_threshold=None,
+                              is_resolved_name=False, print_info=False, trace_names=None):
+    """
+    Extract a regression model for predicting execution times using Amdahl's Law for parallel scaling.
+
+    This function builds a combined linear regression + Amdahl's Law model that accounts for
+    how execution time scales with both input parameters and number of cores.
+
+    :param db_manager: An instance of NextflowTraceDBManager.
+    :param process_name: The name of the process to analyze.
+    :param metric: The metric to analyze (must be "time" for Amdahl's Law).
+    :param top_n: Maximum number of top parameters to use for the regression model.
+    :param rmse_threshold: RMSE threshold for stopping parameter addition. If None, uses metric default.
+    :param is_resolved_name: If True, treat process_name as a resolved process name.
+    :param print_info: If True, print the current expression and RMSE during the process.
+    :param trace_names: Optional list of trace names to filter the data.
+    :return: A dictionary containing the regression model, expression, and evaluation metrics.
+    """
+    # Validate metric parameter - Amdahl's Law is only applicable to time
+    if metric != "time":
+        return extract_metric_linear_reg(
+            db_manager, process_name, metric, top_n, rmse_threshold,
+            is_resolved_name, print_info, trace_names
+        )
+
+    # Use default threshold if not specified
+    if rmse_threshold is None:
+        rmse_threshold = get_metric_default_threshold(metric)
+
+    # Step 1: Retrieve varying pipeline parameters
+    varying_params = identify_variable_pipeline_numerical_parameters(db_manager, trace_names=trace_names)
+    if varying_params.empty:
+        raise Exception("No varying pipeline parameters found.")
+
+    # Step 2: Retrieve execution metrics for the given process
+    execution_metrics = db_manager.process_executions_manager.getExecutionMetricsForProcessAndTraces(
+        process_name, trace_names=trace_names, is_resolved_name=is_resolved_name
+    )
+
+    if execution_metrics.empty:
+        raise Exception(f"No {metric} data found for process '{process_name}'.")
+
+    # Check if we have core count information
+    has_core_variation = "nbCores" in execution_metrics.columns and execution_metrics["nbCores"].nunique() > 1
+
+    if not has_core_variation:
+        if print_info:
+            print("No core count variation found. Using standard linear regression.")
+        return extract_metric_linear_reg(db_manager, process_name, metric, top_n,
+                                         rmse_threshold, is_resolved_name, print_info, trace_names)
+
+    # Convert execution metrics to a DataFrame
+    execution_col = f"execution_time"
+    # Filter the execution metrics to keep only the relevant columns
+    execution_df = execution_metrics[["execution_time", "trace_name", "nbCores"]]
+
+    # Step 3: Pivot the varying_params DataFrame to have one row per trace and columns for each parameter
+    param_df = varying_params.pivot(index="trace_name", columns="param_name", values="value").reset_index()
+
+    # Step 4: Merge execution metrics with varying parameter values
+    merged_df = execution_df.merge(param_df, on="trace_name", how="inner")
+
+    # Step 5: Filter parameters based on hints from ProcessParamsHintsTableManager
+    hinted_params = db_manager.process_params_hints_manager.getHintedParamNamesByProcessName(
+        process_name, is_resolved_name=is_resolved_name
+    )
+    if hinted_params:
+        available_params = [param for param in param_df.columns if param in hinted_params]
+    else:
+        available_params = list(param_df.columns)
+        available_params.remove("trace_name")
+
+    # Create a dictionary mapping parameter names to their types
+    param_types = {}
+    for param in available_params:
+        # Find the type in varying_params
+        param_info = varying_params[varying_params["param_name"] == param]
+        param_types[param] = param_info["type"].iloc[0]
+
+    # Step 6: Use forward selection to find the best parameters
+    y = merged_df[execution_col].values
+    nb_cores = merged_df["nbCores"].values
+    selected_params = []
+    selected_params_info = {}  # Dictionary to store parameter info (name and type)
+    rmse = sys.float_info.max  # Initialize with a large value
+    expression = ""
+    model = None
+
+    # Step 7: Iteratively add parameters to the model
+    for _ in range(top_n):
+        best_param = None
+        best_rmse = sys.float_info.max
+        best_model = None
+        best_expression = ""
+        best_param_type = None
+
+        # If no parameters are left to test, break the loop
+        if not available_params:
+            if print_info:
+                print("No more parameters available to test. Stopping.")
+            break
+
+        # Test each available parameter
+        for param in available_params:
+            current_params = selected_params + [param]
+            X = merged_df[current_params].values
+
+            # Fit the combined Amdahl's Law + Linear Regression model
+            temp_model = AmdahlLinearRegressor()
+            temp_model.fit(X, y, nb_cores)
+
+            # Evaluate the model
+            temp_rmse = temp_model.rmse_
+
+            # Round RMSE values for comparison
+            rounded_temp_rmse = round(temp_rmse)
+            rounded_best_rmse = round(best_rmse)
+
+            # Get the parameter type from our dictionary
+            param_type = param_types.get(param, "Integer")
+
+            # Keep track of the best parameter, prioritizing Boolean > Integer > Real
+            if (
+                rounded_temp_rmse < rounded_best_rmse
+                or (rounded_temp_rmse == rounded_best_rmse and best_param_type == "Real" and param_type in ["Boolean", "Integer"])
+                or (rounded_temp_rmse == rounded_best_rmse and best_param_type == "Integer" and param_type == "Boolean")
+            ):
+                best_rmse = temp_rmse
+                best_param = param
+                best_model = temp_model
+                best_param_type = param_type
+                best_expression = temp_model.get_expression(current_params)
+
+        # Stop if no improvement in RMSE
+        if best_param is None or round(best_rmse) >= round(rmse):
+            if print_info:
+                print(f"Best RMSE: {round(best_rmse):.0f} is not better than current RMSE: {round(rmse):.0f}. Stopping.")
+            break
+
+        # Update the selected parameters and model if the best parameter improves the RMSE
+        selected_params.append(best_param)
+        selected_params_info[best_param] = {
+            "type": param_types.get(best_param, "Integer")
+        }
+
+        available_params.remove(best_param)
+        rmse = best_rmse
+        model = best_model
+        expression = best_expression
+
+        # Print the current expression and RMSE
+        if print_info:
+            print(f"Current expression: {expression}")
+            print(f"Current RMSE: {round(rmse):.0f}")
+
+        # Stop if RMSE is below the threshold
+        if rmse <= rmse_threshold:
+            if print_info:
+                print(f"RMSE: {round(rmse):.0f} is below the threshold of {rmse_threshold}. Stopping.")
+            break
+
+    # Return model info
+    model_info = {
+        "model": model,
+        "expression": expression,
+        "rmse": rmse,
+        "selected_parameters": selected_params_info,
+        "metric": metric,
+        "parallel_fraction": model.parallel_fraction_ if model is not None else None
     }
 
     return model_info
@@ -1487,9 +1679,9 @@ if __name__ == "__main__":
         print_info=True
     )
 
-    extract_metric_linear_reg(
+    extract_amdahl_linear_reg(
         db_manager,
-        process_name="frb:corr_field:do_correlation",
+        process_name="fcal1:corr_fcal:do_correlation",
         metric="time",
         top_n=9,
         rmse_threshold=10000,

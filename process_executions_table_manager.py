@@ -184,7 +184,7 @@ class ProcessExecutionTableManager:
                 pe.eId,
                 pe.time AS execution_time,
                 pe.instance,
-                pe.cpu,
+                pe.nbCores,
                 pe.memory,
                 pe.allocated_mem,
                 t.name AS trace_name,
@@ -215,7 +215,7 @@ class ProcessExecutionTableManager:
         if execution_data:
             df = pd.DataFrame(execution_data,
                               columns=["eId", "execution_time", "instance",
-                                       "cpu", "memory", "allocated_mem", "trace_name", "resolved_process_name"])
+                                       "nbCores", "memory", "allocated_mem", "trace_name", "resolved_process_name"])
             all_results.append(df)
         else:
             print(f"No execution times found for process '{process_name}'")

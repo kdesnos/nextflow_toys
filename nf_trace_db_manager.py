@@ -361,7 +361,9 @@ if __name__ == "__main__":
         "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_report.html",
         "./dat/250515_241226_CELEBI/karol_241226_ult_2025-05-15_13_41_42_report.html",
         "./dat/250522_241027_CELEBI/karol_241027_ult_2025-05-22_10_05_56_report.html",
-        "./dat/250523_241014_CELEBI/karol_241014_ult_2025-05-23_12_12_20_report.html"
+        "./dat/250523_241014_CELEBI/karol_241014_ult_2025-05-23_12_12_20_report.html",
+        "./dat/250616_241226_CELEBI_mold/karol_241226_ult_2025-06-16_10_22_54_report.html",
+        "./dat/250616_210912_CELEBI_mold/karol_210912_ult_2025-06-16_13_46_53_report.html"
     ]
 
     # Add process definitions
@@ -372,17 +374,19 @@ if __name__ == "__main__":
         "./dat/250514_250106_CELEBI/karol_250106_ult_2025-05-14_09_41_50_log.log",
         "./dat/250515_241226_CELEBI/karol_241226_ult_2025-05-15_13_41_42_log.log",
         "./dat/250522_241027_CELEBI/karol_241027_ult_2025-05-22_10_05_56_log.log",
-        "./dat/250523_241014_CELEBI/karol_241014_ult_2025-05-23_12_12_20_log.log"]
+        "./dat/250523_241014_CELEBI/karol_241014_ult_2025-05-23_12_12_20_log.log",
+        "./dat/250616_241226_CELEBI_mold/karol_241226_ult_2025-06-16_10_22_54_log.log",
+        "./dat/250616_210912_CELEBI_mold/karol_210912_ult_2025-06-16_13_46_53_log.log"]
 
     for html_file_path, log_file in zip(html_file_paths, log_files):
         print(f"Loading files: {html_file_path} and {log_file}")
         db_manager.addAllFromFiles(html_file_path, log_file)
 
     # Add process parameter hints from code files
-    db_manager.addProcessParamHintsFromCode(
-        root_folder="C:/Git/",
-        prefix="/fred/oz313/src/users/kdesnos/"
-    )
+    # db_manager.addProcessParamHintsFromCode(
+    #     root_folder="C:/Git/",
+    #     prefix="/fred/oz313/src/users/kdesnos/"
+    # )
 
     # Print database information
     db_manager.printDBInfo()
