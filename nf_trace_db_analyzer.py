@@ -835,7 +835,6 @@ def extract_amdahl_linear_reg(db_manager, process_name, metric="time", top_n=3, 
 
     # Step 6: Use forward selection to find the best parameters
     y = merged_df[execution_col].values
-    nb_cores = merged_df["nbCores"].values
     selected_params = []
     selected_params_info = {}  # Dictionary to store parameter info (name and type)
     rmse = sys.float_info.max  # Initialize with a large value
@@ -858,12 +857,12 @@ def extract_amdahl_linear_reg(db_manager, process_name, metric="time", top_n=3, 
 
         # Test each available parameter
         for param in available_params:
-            current_params = selected_params + [param]
+            current_params = selected_params + [param, "nbCores"]  # Always add nbCores as last param
             X = merged_df[current_params].values
 
             # Fit the combined Amdahl's Law + Linear Regression model
             temp_model = AmdahlLinearRegressor()
-            temp_model.fit(X, y, nb_cores)
+            temp_model.fit(X, y)
 
             # Evaluate the model
             temp_rmse = temp_model.rmse_
@@ -915,14 +914,18 @@ def extract_amdahl_linear_reg(db_manager, process_name, metric="time", top_n=3, 
                 print(f"RMSE: {round(rmse):.0f} is below the threshold of {rmse_threshold}. Stopping.")
             break
 
+    # Append nbCores to the selected_params_info before return
+    selected_params_info["nbCores"] = {
+        "type": "Integer"
+    }
+
     # Return model info
     model_info = {
         "model": model,
         "expression": expression,
         "rmse": rmse,
-        "selected_parameters": selected_params_info,
-        "metric": metric,
-        "parallel_fraction": model.parallel_fraction_ if model is not None else None
+        "selected_parameters": selected_params_info, 
+        "metric": metric
     }
 
     return model_info
@@ -1225,7 +1228,6 @@ def build_execution_metric_predictors(db_manager, metric="time", trace_names=Non
     std_dev_col = f"std_dev_{metric}"
     min_col = f"min_{metric}"
     max_col = f"max_{metric}"
-    effect_col = f"{metric}_effect"
 
     # Step 2.1: For processes and resolved processes with non-impactful traces, extract statistical information
     for _, row in anova_results.iterrows():
@@ -1274,7 +1276,7 @@ def build_execution_metric_predictors(db_manager, metric="time", trace_names=Non
         # Step 2.2: For processes and resolved processes with impactful traces, parameter-dependent prediction
         elif row['trace_significant'] and not row['resolved_significant']:
             # Per process prediction
-            model = extract_metric_linear_reg(
+            model = extract_amdahl_linear_reg(
                 db_manager,
                 process_name=row['process_name'],
                 metric=metric,
@@ -1292,7 +1294,7 @@ def build_execution_metric_predictors(db_manager, metric="time", trace_names=Non
             # Per resolved process prediction
             rp_list = db_manager.resolved_process_manager.getResolvedProcessesOfProcess(row['process_name'])
             for rp in rp_list:
-                model = extract_metric_linear_reg(
+                model = extract_amdahl_linear_reg(
                     db_manager,
                     process_name=rp.name,
                     metric=metric,

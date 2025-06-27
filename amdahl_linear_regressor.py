@@ -11,22 +11,22 @@ class AmdahlLinearRegressor(BaseEstimator, RegressorMixin):
         self.parallel_fraction_ = None
         self.rmse_ = None
         
-    def fit(self, X, y, nb_cores):
+    def fit(self, X, y):
         """
         Fit the model using both linear regression parameters and parallelization factor.
-        
+        The last column of X is assumed to be the core count (nb_cores).
         Parameters:
-        X - Feature matrix (parameters)
+        X - Feature matrix (parameters, last column is nb_cores)
         y - Actual execution times
-        nb_cores - Array of core counts for each execution
         """
-        n_features = X.shape[1]
+        n_features = X.shape[1] - 1  # last column is nb_cores
         
         def predict_internal(params):
             intercept = params[0]
             coeffs = params[1:n_features+1]
             X_parallel = params[-1]
-            base_times = intercept + np.sum(X * coeffs, axis=1)
+            base_times = intercept + np.sum(X[:, :n_features] * coeffs, axis=1)
+            nb_cores = X[:, -1]
             predicted_times = base_times * ((1 - X_parallel) + X_parallel / nb_cores)
             return predicted_times
         
@@ -45,18 +45,23 @@ class AmdahlLinearRegressor(BaseEstimator, RegressorMixin):
         self.rmse_ = result.fun  # Final RMSE
         return self
     
-    def predict(self, X, nb_cores=1):
+    def predict(self, X):
         if self.coefficients_ is None:
             raise ValueError("Model not fitted yet.")
-        base_times = self.intercept_ + np.sum(X * self.coefficients_, axis=1)
+        n_features = X.shape[1] - 1
+        base_times = self.intercept_ + np.sum(X[:, :n_features] * self.coefficients_, axis=1)
+        nb_cores = X[:, -1]
         predicted_times = base_times * ((1 - self.parallel_fraction_) + self.parallel_fraction_ / nb_cores)
         return predicted_times
 
     def get_expression(self, param_names):
+        # param_names: list of parameter names, last one is nb_cores
+        n_features = len(param_names) - 1
         terms = [f"{self.intercept_:.2f}"]
         for i, coef in enumerate(self.coefficients_):
             if coef != 0:
                 terms.append(f"({coef:.2f} * {param_names[i]})")
         base_expr = " + ".join(terms)
-        full_expr = f"({base_expr}) * ({1-self.parallel_fraction_:.4f} + {self.parallel_fraction_:.4f}/cores)"
+        nb_cores_var = param_names[-1]
+        full_expr = f"({base_expr}) * ({1-self.parallel_fraction_:.4f} + {self.parallel_fraction_:.4f}/{nb_cores_var})"
         return full_expr
