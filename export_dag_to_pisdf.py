@@ -7,6 +7,7 @@ import extract_from_nf_log
 import extract_trace_from_html
 import import_dag_from_mermaid_html
 from lxml import etree
+from collections import Counter
 
 import nf_trace_db_analyzer
 from nf_trace_db_manager import NextflowTraceDBManager
@@ -795,7 +796,7 @@ class PreesmExporter:
         Exports the scenario description to a file in SLAM format.
 
         :param nb_cores_printed: A dictionary mapping node types to the number of cores used in the architecture.
-        :param process_timings: A dictionary mapping process full names to their timings (as int).
+        :param process_timings: A dictionary mapping core_type (as int) to a dictionary mapping process full names to their timings (as int).
         """
         scenario_path = self.project_path / "Scenarios" / "generated.scenario"
 
@@ -833,6 +834,23 @@ class PreesmExporter:
                 elif data.get('type') == 'operator' or data.get('type') == 'factory':
                     all_cores_process.append(path)
 
+        # Identify processes that can be mapped to several cores
+        flexible_mapping_processes = []
+        all_mapped_processes = []
+        for plist in process_to_cpu_mapping.values():
+            all_mapped_processes.extend(plist)
+        process_counts = Counter(all_mapped_processes)
+        for path, process in process_paths.items():
+            if process_counts.get(process, 0) > 1:
+                flexible_mapping_processes.append(process)
+
+        # For all processes with flexible mappping,
+        # ensure they are present in all list of process_to_cpu_mapping
+        for process in flexible_mapping_processes:
+            for core_type, processes in process_to_cpu_mapping.items():
+                if process not in processes:
+                    process_to_cpu_mapping[core_type].append(process)
+
         # Print constraints for each core
         for core_type, nb_core in nb_cores_printed.items():
             for i in range(nb_core):
@@ -860,15 +878,15 @@ class PreesmExporter:
 
         # Print timing per process
         for path, process in process_paths.items():
-            core_type = next((key for key, value in process_to_cpu_mapping.items() if process in value))
-            node_type = f"node_{core_type}"
+            for core_type in [key for key, value in process_to_cpu_mapping.items() if process in value]:
+                node_type = f"node_{core_type}"
 
-            timings = process_timings.loc[process_timings['process_name'] == process, 'predicted_time']
-            if timings.empty:
-                print(f"Warning: No timing found for process {process}, setting timing to 1")
+                timings = process_timings[core_type].loc[process_timings[core_type]['process_name'] == process, 'predicted_time']
+                if timings.empty:
+                    print(f"Warning: No timing found for process {process}, setting timing to 1")
 
-            timing = timings.iloc[0] if not timings.empty else 1  # Default to 1 if no timing is found
-            xml_content.append(f'<timing opname="{node_type}" time="{timing:.0f}" timingtype="EXECUTION_TIME" vertexname="{path}"/>')
+                timing = timings.iloc[0] if not timings.empty else 1  # Default to 1 if no timing is found
+                xml_content.append(f'<timing opname="{node_type}" time="{timing:.0f}" timingtype="EXECUTION_TIME" vertexname="{path}"/>')
 
         # For actors in all_cores_process, add a default timing for each core type
         for process in all_cores_process:
@@ -934,17 +952,41 @@ class PreesmExporter:
         self.db_manager.connect()
 
         param_values = extract_from_nf_log.extractPipelineParameters(log_report_path)
-        stats_df, regression_df = nf_trace_db_analyzer.build_execution_metric_predictors(self.db_manager, metric="time")
-
-        predictions = nf_trace_db_analyzer.predict_metric_from_param_values(
-            self.db_manager,
-            stats_based_config=stats_df,
-            model_based_config=regression_df,
-            pipeline_params_df=param_values,
-            metric="time")
+        stats_df, regression_df, no_model_df = nf_trace_db_analyzer.build_execution_metric_predictors(self.db_manager, metric="time")
 
         self.export_dataflow_files()
         nb_cores_printed = self.export_archi_to_files(nb_cores)
+
+        # Predict execution times for all printed number of cores
+        predictions = dict()
+        for core_type, _ in nb_cores_printed.items():
+            param_values_local = param_values.copy()  # Avoid mutating the original DataFrame
+            # Add nbCores and inverted_nbCores in a single pandas concat
+            param_values_local = pandas.concat([
+                param_values_local,
+                pandas.DataFrame([
+                    {
+                        'param_name': 'nbCores',
+                        'original_value': str(core_type),
+                        'type': 'Integer',
+                        'reformatted_value': int(core_type)
+                    },
+                    {
+                        'param_name': 'inverted_nbCores',
+                        'original_value': str(1 / core_type),
+                        'type': 'Real',
+                        'reformatted_value': 1 / core_type
+                    }
+                ])
+            ], ignore_index=True)
+            predictions[core_type] = nf_trace_db_analyzer.predict_metric_from_param_values(
+                self.db_manager,
+                stats_based_config=stats_df,
+                model_based_config=regression_df,
+                pipeline_params_df=param_values_local,
+                metric="time")
+
+        print(f"Predicted execution times for each core type: {predictions}")
         self.export_scenario_to_file(nb_cores_printed, predictions)
 
         self.db_manager.close()
