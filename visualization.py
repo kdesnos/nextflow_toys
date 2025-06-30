@@ -229,7 +229,7 @@ def plot_execution_time_predictions(db_manager: NextflowTraceDBManager, process_
     :param db_manager: An instance of NextflowTraceDBManager.
     :param process_name: The name of the process being analyzed.
     :param trace_names: List of trace names used in the analysis. If None, all traces are used.
-    :param linear_model: The linear regression model. If None, it will be computed.
+    :param linear_model: The regression model info dict (from extract_metric_linear_reg or extract_amdahl_linear_reg).
     :param traces_for_model: List of traces to use for building the model. If None, all traces are used.
     """
     # Use all traces if trace_names is not provided
@@ -240,7 +240,7 @@ def plot_execution_time_predictions(db_manager: NextflowTraceDBManager, process_
     if traces_for_model is None:
         traces_for_model = trace_names
 
-    # Compute the linear model if not provided
+    # Compute the model if not provided
     if linear_model is None:
         linear_model = extract_metric_linear_reg(
             db_manager,
@@ -263,32 +263,45 @@ def plot_execution_time_predictions(db_manager: NextflowTraceDBManager, process_
     # Retrieve parameter values for the given traces
     params_by_trace = db_manager.pipeline_param_values_manager.getParamValuesForTraces(trace_names)
 
-    # Create a plot for linear regression
+    # Create a plot for regression
     fig, ax = plt.subplots(figsize=(12, 8))
     fig.suptitle(f'Actual vs Predicted Execution Times for {process_name}\nAcross Multiple Traces', fontsize=16)
 
     colors = [hsv_to_rgb((i / len(trace_names), 0.8, 0.9)) for i in range(len(trace_names))]
 
-    all_predictions_linear = []
+    all_predictions = []
     all_actuals = []
-    selected_params_linear = linear_model["selected_parameters"]
+    selected_params = list(linear_model["selected_parameters"].keys())
+    model = linear_model["model"]
 
     for i, trace_name in enumerate(trace_names):
         trace_execution_times = execution_times[execution_times["trace_name"] == trace_name]
         if trace_execution_times.empty:
             continue
         param_values = params_by_trace[trace_name]
-        X_pred = np.array([[param_values.get(param, 0) for param in selected_params_linear]] * len(trace_execution_times))
-        predictions = linear_model["model"].predict(X_pred)
-        all_predictions_linear.extend(predictions)
+        # Build X_pred for all executions in this trace
+        X_pred = np.array([[param_values.get(param, 0) for param in selected_params]] * len(trace_execution_times))
+        # Special handling for nbCores
+        if "nbCores" in selected_params:
+            # Fill nbCores from the actual executions for this trace
+            nb_cores_values = trace_execution_times["nbCores"].values
+            # Replace the last column with the actual nbCores for each execution
+            X_pred[:, selected_params.index("nbCores")] = nb_cores_values
+        if "inverted_nbCores" in selected_params:
+            # Fill inverted_nbCores from the actual executions for this trace
+            inverted_nb_cores_values = 1 / trace_execution_times["nbCores"].values
+            # Replace the last column with the actual inverted nbCores for each execution
+            X_pred[:, selected_params.index("inverted_nbCores")] = inverted_nb_cores_values
+        predictions = model.predict(X_pred)
+        all_predictions.extend(predictions)
         all_actuals.extend(trace_execution_times["execution_time"].values)
         ax.scatter(predictions, trace_execution_times["execution_time"], alpha=0.7,
                    color=colors[i], s=40, label=f"{trace_name} (n={len(trace_execution_times)})")
 
     # Calculate RMSE and additional lines
     rmse = linear_model["rmse"]
-    min_actual = min(all_actuals)
-    max_actual = max(all_actuals)
+    min_actual = min(min(all_actuals), min(all_predictions))
+    max_actual = max(max(all_actuals), max(all_predictions))
     x_range = [min_actual, max_actual]
 
     # Line for predicted value + 2 * RMSE
@@ -302,9 +315,9 @@ def plot_execution_time_predictions(db_manager: NextflowTraceDBManager, process_
     # Perfect prediction line
     ax.plot(x_range, x_range, 'r--', label='Perfect prediction (y = x)')
 
-    # Add the linear model expression to the plot
+    # Add the model expression to the plot
     ax.text(
-        0.05, 0.90, f"Linear Model: {linear_model['expression']}",
+        0.05, 0.90, f"Model: {linear_model['expression']}",
         transform=ax.transAxes,
         fontsize=12,
         color="red",
@@ -318,6 +331,49 @@ def plot_execution_time_predictions(db_manager: NextflowTraceDBManager, process_
     ax.grid(True, alpha=0.3)
 
     # Save and show the plot
-    plt.tight_layout()
     plt.subplots_adjust(top=0.9)
     plt.show(block=False)
+
+
+def main():
+    trace_names = [
+        "high_sanger", "lethal_morse", "marvelous_mirzakhani", "wise_bassi", "zen_shannon", "lethal_bell", "nice_hirsch",
+        "nauseous_majorana", "grave_tesla"
+    ]
+    traces_for_model = trace_names
+    # process_name = "get_start_mjd"
+    # is_resolved_name = False
+
+    process_name = "fcal1:corr_fcal:do_correlation"
+    is_resolved_name = True
+
+    db_manager = NextflowTraceDBManager("./dat/nf_trace_db.sqlite")
+    db_manager.connect()
+
+    from nf_trace_db_analyzer import extract_amdahl_linear_reg
+    linear_model = extract_amdahl_linear_reg(
+        db_manager,
+        process_name,
+        print_info=True,
+        is_resolved_name=is_resolved_name,
+        trace_names=traces_for_model,
+        metric="time",
+        rmse_threshold=10000,
+        top_n=10
+    )
+
+    plot_execution_time_predictions(
+        db_manager,
+        process_name,
+        trace_names,
+        traces_for_model=traces_for_model,
+        linear_model=linear_model,
+        is_resolved_name=is_resolved_name)
+
+    # Wait for matplotlib to be closed
+    input("Press Enter to continue...")
+    db_manager.close()
+
+
+if __name__ == "__main__":
+    main()
