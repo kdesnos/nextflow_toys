@@ -5,3 +5,6 @@ statsmodels==0.14.4
 watchdog
 scikit-learn
 lxml
+plotly
+matplotlib
+pdoc
